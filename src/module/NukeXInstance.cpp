@@ -12,6 +12,7 @@
 #include <pcl/ImageWindow.h>
 #include <pcl/View.h>
 #include <pcl/FITSHeaderKeyword.h>
+#include <pcl/GlobalSettings.h>
 
 // NukeX pipeline headers
 #include "nukex/stacker/stacking_engine.hpp"
@@ -111,6 +112,15 @@ std::string op_trainable_params_json( const nukex::StretchOp& op )
    return j.dump();
 }
 
+// <PixInsight base>/share — where the release tarball deposits
+// qe_database.json (Task 16) and where the Phase 8 bootstrap will live.
+static std::string PIShareRoot()
+{
+   const std::string base =
+       pcl::PixInsightSettings::GlobalString( "Application/BaseDirectory" ).ToUTF8().c_str();
+   return base + "/share";
+}
+
 } // anonymous namespace
 
 namespace pcl
@@ -183,7 +193,7 @@ void NukeXInstance::SaveRatingFromLastRun( const pcl::RatingResult& res )
       const char* home = std::getenv( "HOME" );
       const std::string user_data_root =
           home ? std::string( home ) + "/.config" : std::string( "/tmp" );
-      const std::string share_root = "/opt/PixInsight/share";
+      const std::string share_root = PIShareRoot();
       auto paths = nukex::learning::resolve_user_data_paths( user_data_root, share_root );
       nukex::learning::attach_bootstrap( db, paths.bootstrap_db );
    }
@@ -431,11 +441,8 @@ bool NukeXInstance::ExecuteGlobal()
    config.cache_dir = cacheDirectory.ToUTF8().c_str();
    config.gpu_config.force_cpu_fallback = !enableGPU;
    config.qe_override_path = qeOverridePath.ToUTF8().c_str();
-   // Engine's default qe_database_path stays at "share/qe_database.json"
-   // (resolves relative to the working directory; for PI module installs
-   // that is <plugin>/share/qe_database.json — correct once Task 16 ships
-   // the file). The engine's deferred-load pattern captures any load failure
-   // in qe_load_error_ and returns ok=false + descriptive error on execute().
+   config.qe_database_path = PIShareRoot() + "/qe_database.json";
+   // Shipped QE database lives beside the module install: <base>/share/qe_database.json.
 
    // Execute pipeline with progress reporting
    nukex::StackingEngine engine( config );
@@ -456,7 +463,7 @@ bool NukeXInstance::ExecuteGlobal()
       progress.message( String().Format(
          "** QE database error: %s\n"
          "** This usually means share/qe_database.json is missing from the "
-         "plugin install (Task 16 in progress) or the qe_overrides.json file "
+         "plugin install (the release package was not fully installed) or the qe_overrides.json file "
          "is malformed. Color-science Phase B cannot run without a QE database.",
          result.error.c_str() ).ToUTF8().c_str() );
       return false;
@@ -661,17 +668,10 @@ bool NukeXInstance::ExecuteGlobal()
       // Resolve Phase 8 file paths. user_data_root is where per-user rating
       // DB + trained-model JSON live; share_root is where the read-only
       // bootstrap ships (absent today — LayerLoader falls back cleanly).
-      //
-      // Path strategy (intentionally pragmatic for Task 17):
-      //   * user_data_root = $HOME/.config (falls back to /tmp if no HOME)
-      //   * share_root     = /opt/PixInsight/share (files absent until
-      //                      Phase 8.5 ships a bootstrap)
-      // Phase 8.5 will revisit this to use PCL's File::ApplicationData()
-      // and a module-relative share dir.
       const char* home = std::getenv( "HOME" );
       const std::string user_data_root =
           home ? std::string( home ) + "/.config" : std::string( "/tmp" );
-      const std::string share_root = "/opt/PixInsight/share";
+      const std::string share_root = PIShareRoot();
 
       auto paths = nukex::learning::resolve_user_data_paths( user_data_root, share_root );
 

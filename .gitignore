@@ -25,6 +25,7 @@ Thumbs.db
 repository/*.tar.gz
 repository/*.xsgn
 repository/bin/
+repository/share/
 
 # Test output (visual evaluation PNGs)
 test/output/*.png
