@@ -137,7 +137,7 @@ Filter FilterClassifier::classify(const FrameMetadata& meta) {
         out.bandwidth = BandwidthSpec{550.0, 300.0};
         last_warning_ = "Unknown filter '" + meta.filter
                       + "' for mono frame -- treating as generic luminance. "
-                      + "If this is a narrowband filter, add it to qe_overrides.json.";
+                      + "If this is a narrowband filter, rename FILTER to Ha/OIII/SII or add it to a qe_overrides.json selected in the NukeX interface.";
     }
     return out;
 }
