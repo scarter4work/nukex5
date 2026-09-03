@@ -92,3 +92,25 @@ TEST_CASE("FilterClassifier: unknown FILTER + mono -> BROADBAND_L preserve name 
     REQUIRE(c.last_warning().find("Unknown filter") != std::string::npos);
     REQUIRE(c.last_warning().find("custom_Hbeta")   != std::string::npos);
 }
+
+TEST_CASE("FilterClassifier: broadband names on Bayer resolve to BROADBAND_OSC", "[filter_classifier]") {
+    FilterClassifier c;
+    for (const char* name : {"L", "Luminance", "LPro", "L-Pro", "UV/IR Cut", "CLS-CCD", "LPS-D1", "L1"}) {
+        Filter f = c.classify(make_meta(name, "RGGB", "ZWO ASI2400MC Pro"));
+        INFO(name);
+        REQUIRE(f.cls  == FilterClass::BROADBAND_OSC);
+        REQUIRE(f.name == "OSC");
+        REQUIRE(c.last_warning().empty());
+    }
+}
+
+TEST_CASE("FilterClassifier: broadband LPR names on mono resolve to BROADBAND_L named L", "[filter_classifier]") {
+    FilterClassifier c;
+    for (const char* name : {"LPro", "UV-IR-Cut", "CLS", "LPS-D2"}) {
+        Filter f = c.classify(make_meta(name, "", "ASI2600MM"));
+        INFO(name);
+        REQUIRE(f.cls  == FilterClass::BROADBAND_L);
+        REQUIRE(f.name == "L");
+        REQUIRE(c.last_warning().empty());
+    }
+}

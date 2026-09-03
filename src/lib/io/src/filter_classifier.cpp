@@ -3,6 +3,7 @@
 
 #include <cctype>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace nukex {
 
@@ -17,8 +18,6 @@ struct KnownFilter {
 
 const std::unordered_map<std::string, KnownFilter>& known_table() {
     static const std::unordered_map<std::string, KnownFilter> table = {
-        {"l",         {FilterClass::BROADBAND_L,       "L",   550.0, 300.0}},
-        {"luminance", {FilterClass::BROADBAND_L,       "L",   550.0, 300.0}},
         {"r",         {FilterClass::BROADBAND_RGB,     "R",   620.0, 100.0}},
         {"red",       {FilterClass::BROADBAND_RGB,     "R",   620.0, 100.0}},
         {"g",         {FilterClass::BROADBAND_RGB,     "G",   540.0, 100.0}},
@@ -43,6 +42,21 @@ const std::unordered_map<std::string, KnownFilter>& known_table() {
         {"alpt",      {FilterClass::DUAL_NB_OSC,       "ALP-T",      578.5,  5.0}},
     };
     return table;
+}
+
+// Broadband names whose class depends on the sensor: OSC on a Bayer frame,
+// luminance on a mono frame. Normalised (lowercase, alphanumerics only).
+// Sources: research/qe_database_research.json types `luminance` and
+// `broadband-LPR`, plus the bare L aliases moved out of known_table().
+const std::unordered_set<std::string>& broadband_any_names() {
+    static const std::unordered_set<std::string> names = {
+        "l", "lum", "luminance",
+        "lpro", "lpr", "lps", "lpsd1", "lpsd2", "lpsd3", "lpsv4",
+        "uvir", "uvircut", "uvirblock", "irblock", "uvcut",
+        "cls", "clsccd",
+        "l1", "l2", "l3",           // Astronomik L1/L2/L3 UV-IR block
+    };
+    return names;
 }
 
 } // namespace
@@ -89,6 +103,18 @@ Filter FilterClassifier::classify(const FrameMetadata& meta) {
             out.name      = "L_unnamed";
             out.bandwidth = BandwidthSpec{550.0, 300.0};
         }
+        return out;
+    }
+
+    if (broadband_any_names().count(normalized)) {
+        if (is_bayer) {
+            out.cls  = FilterClass::BROADBAND_OSC;
+            out.name = "OSC";
+        } else {
+            out.cls  = FilterClass::BROADBAND_L;
+            out.name = "L";
+        }
+        out.bandwidth = BandwidthSpec{550.0, 300.0};
         return out;
     }
 
