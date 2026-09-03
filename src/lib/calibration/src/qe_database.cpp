@@ -79,6 +79,11 @@ LoadResult QEDatabase::parse_and_merge(const std::string& text, const char* cont
     }
 
     if (doc.contains("cameras") && doc["cameras"].is_object()) {
+        // Parsed into a local map first so a collision detected partway
+        // through this document leaves cameras_ (and any earlier load)
+        // completely unaffected — a failed load must not half-apply.
+        std::unordered_map<std::string, CameraQE> parsed_cameras;
+        std::unordered_map<std::string, std::string> normalized_to_raw;
         for (auto it = doc["cameras"].begin(); it != doc["cameras"].end(); ++it) {
             const std::string& name = it.key();
             const json& cam_json    = it.value();
@@ -99,9 +104,23 @@ LoadResult QEDatabase::parse_and_merge(const std::string& text, const char* cont
                     cam.qe_by_wavelength[wl] = per_site;
                 }
             }
-            // Override semantics: replace whole camera record.
-            // (Coarse but reflects spec: "override wins on key collision".)
-            cameras_[normalize_camera_key(name)] = std::move(cam);
+
+            const std::string norm = normalize_camera_key(name);
+            auto seen = normalized_to_raw.find(norm);
+            if (seen != normalized_to_raw.end() && seen->second != name) {
+                std::ostringstream oss;
+                oss << context << ": camera keys '" << seen->second << "' and '" << name
+                    << "' both normalise to '" << norm << "'";
+                return {false, oss.str()};
+            }
+            normalized_to_raw[norm] = name;
+            parsed_cameras[norm]    = std::move(cam);
+        }
+        // No collision within this document — override semantics: replace
+        // whole camera record on key collision against earlier loads.
+        // (Coarse but reflects spec: "override wins on key collision".)
+        for (auto& kv : parsed_cameras) {
+            cameras_[kv.first] = std::move(kv.second);
         }
     }
 
@@ -140,9 +159,14 @@ std::string QEDatabase::resolve_camera(const std::string& instrume) const {
     const std::string key = normalize_camera_key(instrume);
     if (key.empty()) return {};
     if (cameras_.count(key)) return key;
+    // Longest contained key wins; on a length tie, the lexicographically
+    // smaller key wins, so the result does not depend on unordered_map's
+    // iteration order.
     std::string best;
     for (const auto& kv : cameras_) {
-        if (kv.first.size() > best.size() && key.find(kv.first) != std::string::npos) {
+        if (key.find(kv.first) == std::string::npos) continue;
+        if (kv.first.size() > best.size() ||
+            (kv.first.size() == best.size() && kv.first < best)) {
             best = kv.first;
         }
     }

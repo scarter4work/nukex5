@@ -109,3 +109,32 @@ TEST_CASE("QEDatabase: resolve_camera prefers the longest contained key", "[qe_d
     REQUIRE(db.resolve_camera("ZWO ASI2600MC Pro") == "asi2600mcpro");
     REQUIRE(db.resolve_camera("ZWO ASI2600MC")     == "asi2600mc");
 }
+
+TEST_CASE("QEDatabase: resolve_camera breaks equal-length ties lexicographically", "[qe_database]") {
+    QEDatabase db;
+    REQUIRE(db.load_shipped(fixture("minimal_db.json").string()).ok);
+    // "ZWO-ABD1" -> "zwoabd1" and "ZWO-ABC1" -> "zwoabc1" are both 7 chars
+    // and both contained in the instrume below; the lexicographically
+    // smaller key ("zwoabc1") must win regardless of map iteration order.
+    REQUIRE(db.load_override(fixture("override_equal_length.json").string()).ok);
+    REQUIRE(db.resolve_camera("ZWO ABC1 ZWO ABD1") == "zwoabc1");
+}
+
+TEST_CASE("QEDatabase: colliding normalised camera keys within one document -> loud fail", "[qe_database]") {
+    QEDatabase db;
+    REQUIRE(db.load_shipped(fixture("minimal_db.json").string()).ok);
+    REQUIRE(db.lookup_camera_qe("ASI585MC", 656.3, Photosite::R) == Catch::Approx(0.73).margin(0.01));
+
+    // "ASI-585MC" and "ASI585 MC" both normalise to "asi585mc" within the
+    // SAME document — that is an ambiguous DB, not an override, so it must
+    // fail loud rather than silently pick whichever the map visits last.
+    auto r = db.load_override(fixture("collision.json").string());
+    REQUIRE_FALSE(r.ok);
+    REQUIRE(r.error.find("ASI-585MC") != std::string::npos);
+    REQUIRE(r.error.find("ASI585 MC") != std::string::npos);
+
+    // The failed override must not have half-applied: the shipped value
+    // for asi585mc is untouched.
+    REQUIRE(db.has_camera("asi585mc"));
+    REQUIRE(db.lookup_camera_qe("ASI585MC", 656.3, Photosite::R) == Catch::Approx(0.73).margin(0.01));
+}
