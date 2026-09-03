@@ -113,6 +113,7 @@ public:
         int                    n_frames_processed        = 0;
         int                    n_frames_failed_alignment = 0;  // real alignment misses only
         int                    n_frames_rejected_filter  = 0;  // unknown FILTER on Bayer
+        bool qe_generic_camera_fallback = false; // spec 6.3: INSTRUME not in QE DB, generic Sony OSC QE used
 
         ExecuteResult();
         ~ExecuteResult();

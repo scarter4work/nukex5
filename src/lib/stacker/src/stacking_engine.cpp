@@ -267,6 +267,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // follow-up. Broadband / single-line slots don't go through Q-solve and
     // therefore don't care, so we only track this for DUAL_NB_OSC frames.
     std::set<std::string> dual_nb_cameras;
+    std::set<std::string> unknown_instrume_warned;
 
     // Frame-level metadata
     std::vector<FrameStats> frame_stats(n_frames);
@@ -345,8 +346,20 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         }
 
         // Track DUAL_NB_OSC cameras for the Q-solve mixed-camera guard.
+        // Resolve the raw INSTRUME onto a DB key here so the guard compares
+        // DB identities ("asi2400mc"), not header spellings.
         if (frame_filter.cls == FilterClass::DUAL_NB_OSC) {
-            dual_nb_cameras.insert(frame_filter.camera);
+            std::string key = qe_database_->resolve_camera(frame_filter.camera);
+            if (key.empty()) {
+                key = QEDatabase::kGenericOSCCamera;
+                result.qe_generic_camera_fallback = true;
+                if (unknown_instrume_warned.insert(frame_filter.camera).second) {
+                    obs.message("Camera '" + frame_filter.camera +
+                                "' unknown; using generic Sony IMX OSC QE values. "
+                                "Output marked as low-confidence (NUKEX_QE_CONFIDENCE).");
+                }
+            }
+            dual_nb_cameras.insert(key);
         }
 
         // Merge per-frame config into the cube's running channel_config.

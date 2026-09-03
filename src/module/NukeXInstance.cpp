@@ -636,6 +636,10 @@ bool NukeXInstance::ExecuteGlobal()
           pcl::IsoString().Format( "%lld",
               static_cast<long long>( composer.gamut_clipped_count() ) ),
           "Pixels clipped to sRGB gamut by ColorComposer" ) );
+      cw_ka.Append( pcl::FITSHeaderKeyword(
+          "NUKEX_QE_CONFIDENCE",
+          result.qe_generic_camera_fallback ? "generic-fallback" : "database",
+          "QE source for Phase B: camera entry or generic Sony OSC fallback" ) );
       cw.SetKeywords( cw_ka );
 
       cw.Show();
