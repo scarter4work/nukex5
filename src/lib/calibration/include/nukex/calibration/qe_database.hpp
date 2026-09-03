@@ -53,8 +53,11 @@ public:
 
     // Maps a FITS INSTRUME value onto a DB camera key: exact normalised match
     // first, else the longest DB key contained in the normalised INSTRUME
-    // ("ZWO ASI2400MC Pro" -> "asi2400mc"). Returns "" when nothing matches;
-    // callers decide between failing loud and kGenericOSCCamera.
+    // ("ZWO ASI2400MC Pro" -> "asi2400mc"). On a length tie between two
+    // contained keys, the lexicographically smaller key wins, so the result
+    // is deterministic regardless of the underlying map's iteration order.
+    // Returns "" when nothing matches; callers decide between failing loud
+    // and kGenericOSCCamera.
     std::string resolve_camera(const std::string& instrume) const;
 
     bool has_camera(const std::string& name) const;
