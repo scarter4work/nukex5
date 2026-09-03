@@ -114,3 +114,15 @@ TEST_CASE("ModelSelector: very few samples → KDE fallback", "[selector]") {
     REQUIRE(result.converged);
     REQUIRE(result.distribution.used_nonparametric);
 }
+
+TEST_CASE("ModelSelector::select: a single sample sets FIT_FAILED but keeps the sample as the estimate",
+          "[selector]") {
+    float v[] = {0.42f};
+    float w[] = {1.0f};
+    SubcubeVoxel voxel{};
+    ModelSelector selector;
+    selector.select(v, w, 1, voxel, 0);
+    REQUIRE(voxel.has_flag(VoxelFlags::FIT_FAILED));
+    REQUIRE(voxel.distribution[0].true_signal_estimate == Catch::Approx(0.42f));
+    REQUIRE(voxel.distribution[0].shape == DistributionShape::UNKNOWN);
+}
