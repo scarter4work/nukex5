@@ -105,3 +105,35 @@ TEST_CASE("Phase A: mixed L + HaO3 batch builds union slot config",
     REQUIRE(result.cube->channel_config.slot_index("G_HaO3") != -1);
     REQUIRE(result.cube->channel_config.slot_index("B_HaO3") != -1);
 }
+
+TEST_CASE("Phase A: missing FILTER on mono (L_unnamed) routes into the L slot",
+          "[.integration][phase_a]") {
+    auto tmp = fs::temp_directory_path() / "phase_a_mono_unnamed.fits";
+    test_util::write_synthetic_mono(tmp.string(), 16, 16, "ASI2600MM", /*filter*/"", 0.5f);
+
+    StackingEngine::Config cfg;
+    cfg.qe_database_path = (fs::path(NUKEX_TEST_FIXTURES_DIR) / "qe" / "minimal_db.json").string();
+    StackingEngine engine(cfg);
+    auto result = engine.execute({tmp.string()}, {}, nullptr);
+
+    REQUIRE(result.ok);
+    int L_idx = result.cube->channel_config.slot_index("L");
+    REQUIRE(L_idx != -1);
+    REQUIRE(result.cube->at(8, 8).welford[L_idx].mean == Catch::Approx(0.5f).margin(0.05f));
+}
+
+TEST_CASE("Phase A: unknown FILTER on mono routes into the L slot (spec 6.3, e.g. a wheel slot number)",
+          "[.integration][phase_a]") {
+    auto tmp = fs::temp_directory_path() / "phase_a_mono_unknown.fits";
+    test_util::write_synthetic_mono(tmp.string(), 16, 16, "ATR585M", /*filter*/"1", 0.5f);
+
+    StackingEngine::Config cfg;
+    cfg.qe_database_path = (fs::path(NUKEX_TEST_FIXTURES_DIR) / "qe" / "minimal_db.json").string();
+    StackingEngine engine(cfg);
+    auto result = engine.execute({tmp.string()}, {}, nullptr);
+
+    REQUIRE(result.ok);
+    int L_idx = result.cube->channel_config.slot_index("L");
+    REQUIRE(L_idx != -1);
+    REQUIRE(result.cube->at(8, 8).welford[L_idx].mean == Catch::Approx(0.5f).margin(0.05f));
+}
