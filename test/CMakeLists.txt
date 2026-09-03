@@ -96,6 +96,7 @@ nukex_add_test(test_layer_loader unit/stretch/test_layer_loader.cpp nukex4_stret
 # Learning library tests (Phase 8 stats-driven tuning)
 nukex_add_test(test_ridge_regression unit/learning/test_ridge_regression.cpp nukex4_learning)
 nukex_add_test(test_rating_db unit/learning/test_rating_db.cpp nukex4_learning sqlite3_vendored)
+nukex_add_test(test_rating_db_migration unit/learning/test_rating_db_migration.cpp nukex4_learning sqlite3_vendored)
 nukex_add_test(test_train_model unit/learning/test_train_model.cpp nukex4_learning sqlite3_vendored)
 nukex_add_test(test_atomic_write unit/learning/test_atomic_write.cpp nukex4_learning)
 
@@ -107,9 +108,25 @@ nukex_add_test(test_gpu_agreement unit/gpu/test_gpu_agreement.cpp nukex4_gpu nuk
 nukex_add_test(test_fit_heartbeat unit/gpu/test_fit_heartbeat.cpp nukex4_gpu)
 
 # Module-layer tests (fits_metadata and future module code)
-add_library(nukex4_module_testlib OBJECT
+#
+# Split into two OBJECT libraries that never share a link: the old
+# filter_classifier.cpp and the new nukex4_io/nukex4_core both define an
+# externally linked nukex::filter_class_name(nukex::FilterClass), which
+# mangles identically despite being different enums. Combining their
+# object files in one binary lets the linker silently pick either
+# implementation with no error. This legacy lib exists only to keep the
+# old classifier's objects out of any link that also holds nukex4_core;
+# Task 19 deletes it along with filter_classifier.{hpp,cpp}.
+add_library(nukex4_module_legacy_testlib OBJECT
     "${CMAKE_SOURCE_DIR}/src/module/fits_metadata.cpp"
     "${CMAKE_SOURCE_DIR}/src/module/filter_classifier.cpp"
+)
+target_include_directories(nukex4_module_legacy_testlib PUBLIC
+    "${CMAKE_SOURCE_DIR}/src/module"
+)
+target_link_libraries(nukex4_module_legacy_testlib PUBLIC cfitsio)
+
+add_library(nukex4_module_testlib OBJECT
     "${CMAKE_SOURCE_DIR}/src/module/stretch_auto_selector.cpp"
     "${CMAKE_SOURCE_DIR}/src/module/stretch_factory.cpp"
 )
@@ -118,10 +135,10 @@ target_include_directories(nukex4_module_testlib PUBLIC
     "${CMAKE_SOURCE_DIR}/src/lib/io/include"
     "${CMAKE_SOURCE_DIR}/src/lib/stretch/include"
 )
-target_link_libraries(nukex4_module_testlib PUBLIC cfitsio nukex4_stretch)
+target_link_libraries(nukex4_module_testlib PUBLIC nukex4_stretch nukex4_io)
 
-nukex_add_test(test_fits_metadata unit/module/test_fits_metadata.cpp nukex4_module_testlib)
-nukex_add_test(test_filter_classifier unit/module/test_filter_classifier.cpp nukex4_module_testlib)
+nukex_add_test(test_fits_metadata unit/module/test_fits_metadata.cpp nukex4_module_legacy_testlib)
+nukex_add_test(test_filter_classifier unit/module/test_filter_classifier.cpp nukex4_module_legacy_testlib)
 nukex_add_test(test_stretch_auto_selector unit/module/test_stretch_auto_selector.cpp nukex4_module_testlib)
 nukex_add_test(test_stretch_factory unit/module/test_stretch_factory.cpp nukex4_module_testlib)
 nukex_add_test(test_phase8_fallback unit/module/test_phase8_fallback.cpp nukex4_stretch nukex4_learning sqlite3_vendored)

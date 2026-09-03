@@ -29,9 +29,11 @@ struct RatingResult {
 
 class RatingDialog : public Dialog {
 public:
-    // filter_class: 0 = LRGB_mono, 1 = Bayer_RGB, 2 = Narrowband_HaO3, 3 = Narrowband_S2O3.
-    // Color axis is hidden for filter_class != 1.
+    // filter_class: rating-DB schema v2 ints (1 BROADBAND_L, 2 BROADBAND_RGB,
+    // 3 BROADBAND_OSC, 4 NARROWBAND_SINGLE, 5 DUAL_NB_OSC, 0 UNKNOWN).
+    // The color axis is shown only when has_color_axis(filter_class).
     RatingDialog(int filter_class);
+    static bool has_color_axis(int filter_class) { return filter_class == 2 || filter_class == 3; }
 
     RatingResult Run();
 

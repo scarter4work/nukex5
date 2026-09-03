@@ -50,7 +50,7 @@ RatingDialog::RatingDialog(int filter_class) : filter_class_(filter_class) {
     root_.Add(saturation_label_); root_.Add(saturation_);
 
     // Hide color axis for mono / narrowband.
-    if (filter_class_ == 1 /* Bayer_RGB */) {
+    if (has_color_axis(filter_class_)) {
         root_.Add(color_label_); root_.Add(color_);
     }
 
@@ -71,7 +71,7 @@ void RatingDialog::OnSaveClick(Button&, bool) {
     result_.dont_show_again  = dont_show_again_.IsChecked();
     result_.brightness       = brightness_.Value();
     result_.saturation       = saturation_.Value();
-    if (filter_class_ == 1) result_.color = color_.Value();
+    if (has_color_axis(filter_class_)) result_.color = color_.Value();
     result_.star_bloat       = star_bloat_.Value();
     result_.overall          = overall_.Value();
     Ok();

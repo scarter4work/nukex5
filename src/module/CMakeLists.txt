@@ -10,6 +10,15 @@ endif()
 
 message(STATUS "PCL found at ${PCLDIR} -- building NukeX module")
 
+# filter_classifier.cpp (the old 4-class module-local classifier) is
+# intentionally NOT compiled into the module: it defines the externally
+# linked nukex::filter_class_name(nukex::FilterClass), which mangles
+# identically to the new nukex::filter_class_name in nukex4_core despite
+# being a different enum, so the two would silently collide at link time
+# with no error -- whichever object file the linker sees first wins, and
+# it produced wrong class-name text in the Process Console log line.
+# Nothing in the module calls the old classifier anymore after Task 14;
+# the file itself stays on disk untouched and is deleted by Task 19.
 set(MODULE_SOURCES
     NukeXModule.cpp
     NukeXProcess.cpp
@@ -19,7 +28,6 @@ set(MODULE_SOURCES
     NukeXProgress.cpp
     RatingDialog.cpp
     fits_metadata.cpp
-    filter_classifier.cpp
     stretch_auto_selector.cpp
     stretch_factory.cpp
 )

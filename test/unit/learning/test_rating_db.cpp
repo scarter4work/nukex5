@@ -32,11 +32,11 @@ TEST_CASE("open_rating_db: creates fresh DB with schema", "[learning][rating_db]
     REQUIRE(sqlite3_column_int(stmt, 0) == 1);
     sqlite3_finalize(stmt);
 
-    // user_version == 1
+    // user_version == kRatingDbSchemaVersion
     stmt = nullptr;
     REQUIRE(sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &stmt, nullptr) == SQLITE_OK);
     REQUIRE(sqlite3_step(stmt) == SQLITE_ROW);
-    REQUIRE(sqlite3_column_int(stmt, 0) == 1);
+    REQUIRE(sqlite3_column_int(stmt, 0) == kRatingDbSchemaVersion);
     sqlite3_finalize(stmt);
 
     close_rating_db(db);
