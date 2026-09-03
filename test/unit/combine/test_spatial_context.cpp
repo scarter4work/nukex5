@@ -3,9 +3,17 @@
 #include "nukex/io/image.hpp"
 #include "nukex/core/cube.hpp"
 #include "nukex/core/channel_config.hpp"
+#include "nukex/core/filter.hpp"
 #include <cmath>
 
 using namespace nukex;
+
+static ChannelConfig cfg_for(FilterClass cls, const char* name) {
+    Filter f;
+    f.cls  = cls;
+    f.name = name;
+    return ChannelConfig::from_filter(f);
+}
 
 TEST_CASE("SpatialContext::sobel_gradient: flat image → zero gradient", "[spatial]") {
     Image img(32, 32, 1);
@@ -31,7 +39,7 @@ TEST_CASE("SpatialContext::sobel_gradient: border → zero", "[spatial]") {
 }
 
 TEST_CASE("SpatialContext::compute: writes to voxels", "[spatial]") {
-    auto config = ChannelConfig::from_mode(StackingMode::MONO_L);
+    auto config = cfg_for(FilterClass::BROADBAND_L, "L");
     Cube cube(16, 16, config);
     Image output(16, 16, 1);
     for (int y = 0; y < 16; y++)
