@@ -8,7 +8,7 @@
 
 #include "NukeXProgress.h"
 #include "RatingDialog.h"
-#include "filter_classifier.hpp"
+#include "nukex/io/filter_classifier.hpp"
 #include <pcl/ImageWindow.h>
 #include <pcl/View.h>
 #include <pcl/FITSHeaderKeyword.h>
@@ -23,7 +23,7 @@
 #include "nukex/learning/rating_db.hpp"
 #include "nukex/learning/train_model.hpp"
 #include "nukex/learning/atomic_write.hpp"
-#include "fits_metadata.hpp"
+#include "nukex/io/fits_reader.hpp"
 #include "stretch_factory.hpp"
 
 #include <nlohmann/json.hpp>
@@ -75,30 +75,21 @@ pcl::FITSKeywordArray base_output_keywords(
    return ka;
 }
 
-// Phase 8 rating-popup filter-class encoding.
+// Phase 8 rating-DB filter-class encoding (rating_db.hpp schema v2).
 //
-// The plan's rating-axis encoding (per RatingDialog) is:
-//   0 = LRGB_mono, 1 = Bayer_RGB, 2 = Narrowband_HaO3, 3 = Narrowband_S2O3
-//
-// Our FilterClass enum is:
-//   LRGB_MONO=0, LRGB_COLOR=1, BAYER_RGB=2, NARROWBAND=3
-//
-// The ONLY semantic contract at Task 17 is "filter_class == 1 shows color
-// axis; everything else hides it" — i.e. only a Bayer mosaic run offers
-// meaningful color-balance feedback. LRGB_COLOR (separate RGB channel
-// stacks) collapses to the same no-color-slider UI as mono for this
-// dialog: users rate brightness, saturation, star bloat, overall.
-// Narrowband Ha-O3 vs S2-O3 distinction is not derivable from FITS
-// metadata today and is deferred to Phase 8.5 with explicit filter
-// assignment.
+// RatingDialog shows the color-balance axis only for classes whose output
+// carries broadband chrominance: BROADBAND_RGB (2) and BROADBAND_OSC (3).
+// Luminance, single-line narrowband and dual-NB composites hide it.
 int filter_class_to_rating_int( nukex::FilterClass fc )
 {
    switch ( fc )
    {
-   case nukex::FilterClass::LRGB_MONO:  return 0;
-   case nukex::FilterClass::LRGB_COLOR: return 0; // treat as mono for color-axis purposes
-   case nukex::FilterClass::BAYER_RGB:  return 1;
-   case nukex::FilterClass::NARROWBAND: return 2; // Ha-O3 default; S2-O3 distinction deferred
+   case nukex::FilterClass::BROADBAND_L:       return 1;
+   case nukex::FilterClass::BROADBAND_RGB:     return 2;
+   case nukex::FilterClass::BROADBAND_OSC:     return 3;
+   case nukex::FilterClass::NARROWBAND_SINGLE: return 4;
+   case nukex::FilterClass::DUAL_NB_OSC:       return 5;
+   case nukex::FilterClass::UNKNOWN:           return 0;
    }
    return 0;
 }
@@ -661,7 +652,7 @@ bool NukeXInstance::ExecuteGlobal()
    // factory defaults — preserving bit-identical output vs v4.0.0.8.
    if ( !result.stacked.empty() && !light_paths.empty() )
    {
-      nukex::FITSMetadata meta = nukex::read_fits_metadata( light_paths.front() );
+      nukex::FrameMetadata meta = nukex::FITSReader::read_headers( light_paths.front() );
 
       // Resolve Phase 8 file paths. user_data_root is where per-user rating
       // DB + trained-model JSON live; share_root is where the read-only
@@ -703,8 +694,10 @@ bool NukeXInstance::ExecuteGlobal()
          lastRun.valid               = true;
          lastRun.stats               = stats;
          lastRun.stretch_name        = primary_op->name;
-         lastRun.filter_class        =
-             filter_class_to_rating_int( nukex::classify_filter( meta ) );
+         {
+            nukex::FilterClassifier classifier;
+            lastRun.filter_class = filter_class_to_rating_int( classifier.classify( meta ).cls );
+         }
          lastRun.target_class        = 0; // TODO(Phase 8.5): FITS OBJECT -> class
          lastRun.params_json_applied = op_trainable_params_json( *primary_op );
          // Fresh 128-bit run id. std::rand is not seeded anywhere in NukeX

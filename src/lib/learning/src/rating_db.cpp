@@ -45,8 +45,51 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS idx_runs_stretch ON runs(stretch_name);
 CREATE INDEX IF NOT EXISTS idx_runs_target  ON runs(target_class);
-PRAGMA user_version = 1;
 )SQL";
+
+int read_user_version(sqlite3* db) {
+    sqlite3_stmt* s = nullptr;
+    if (sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &s, nullptr) != SQLITE_OK) return -1;
+    int v = -1;
+    if (sqlite3_step(s) == SQLITE_ROW) v = sqlite3_column_int(s, 0);
+    sqlite3_finalize(s);
+    return v;
+}
+
+bool set_user_version(sqlite3* db, int v) {
+    const std::string sql = "PRAGMA user_version = " + std::to_string(v) + ";";
+    char* err = nullptr;
+    const int rc = sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &err);
+    if (err) sqlite3_free(err);
+    return rc == SQLITE_OK;
+}
+
+// v1 rows carry the v4 rating-axis encoding written by the old
+// NukeXInstance::filter_class_to_rating_int:
+//   0 = LRGB_MONO or LRGB_COLOR (collapsed), 1 = BAYER_RGB,
+//   2 = NARROWBAND, 3 = reserved S2O3 (never written).
+// v2 rows carry FilterClass rating ints (see rating_db.hpp).
+// One CASE expression: sequential `UPDATE … WHERE filter_class = N` would
+// chain (a row moved 0 -> 1 would then match the 1 -> 3 rule).
+bool migrate_v1_to_v2(sqlite3* db) {
+    const char* sql =
+        "BEGIN IMMEDIATE;"
+        "UPDATE runs SET filter_class = CASE filter_class"
+        "   WHEN 0 THEN 1"
+        "   WHEN 1 THEN 3"
+        "   WHEN 2 THEN 4"
+        "   WHEN 3 THEN 4"
+        "   ELSE filter_class END;"
+        "PRAGMA user_version = 2;"
+        "COMMIT;";
+    char* err = nullptr;
+    if (sqlite3_exec(db, sql, nullptr, nullptr, &err) != SQLITE_OK) {
+        if (err) sqlite3_free(err);
+        sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
+        return false;
+    }
+    return true;
+}
 
 bool apply_pragmas_and_schema(sqlite3* db) {
     char* err = nullptr;
@@ -54,11 +97,18 @@ bool apply_pragmas_and_schema(sqlite3* db) {
         sqlite3_free(err);
         return false;
     }
+    // A garbage-bytes file fails here with SQLITE_NOTADB -> -1 -> false,
+    // which open_rating_db() treats as corruption (rename + retry).
+    const int before = read_user_version(db);
+    if (before < 0) return false;
+
     if (sqlite3_exec(db, kSchemaV1, nullptr, nullptr, &err) != SQLITE_OK) {
         sqlite3_free(err);
         return false;
     }
-    return true;
+    if (before == 0) return set_user_version(db, kRatingDbSchemaVersion); // brand-new file
+    if (before == 1) return migrate_v1_to_v2(db);
+    return true; // already current (or newer: leave untouched)
 }
 
 bool integrity_ok(sqlite3* db) {
@@ -117,6 +167,10 @@ sqlite3* open_rating_db(const std::string& path) {
 
 void close_rating_db(sqlite3* db) {
     if (db) sqlite3_close(db);
+}
+
+int rating_db_schema_version(sqlite3* db) {
+    return db ? read_user_version(db) : -1;
 }
 
 namespace {
