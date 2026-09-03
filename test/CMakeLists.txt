@@ -107,25 +107,7 @@ nukex_add_test(test_gpu_kernels unit/gpu/test_gpu_kernels.cpp nukex4_gpu)
 nukex_add_test(test_gpu_agreement unit/gpu/test_gpu_agreement.cpp nukex4_gpu nukex4_stacker)
 nukex_add_test(test_fit_heartbeat unit/gpu/test_fit_heartbeat.cpp nukex4_gpu)
 
-# Module-layer tests (fits_metadata and future module code)
-#
-# Split into two OBJECT libraries that never share a link: the old
-# filter_classifier.cpp and the new nukex4_io/nukex4_core both define an
-# externally linked nukex::filter_class_name(nukex::FilterClass), which
-# mangles identically despite being different enums. Combining their
-# object files in one binary lets the linker silently pick either
-# implementation with no error. This legacy lib exists only to keep the
-# old classifier's objects out of any link that also holds nukex4_core;
-# Task 19 deletes it along with filter_classifier.{hpp,cpp}.
-add_library(nukex4_module_legacy_testlib OBJECT
-    "${CMAKE_SOURCE_DIR}/src/module/fits_metadata.cpp"
-    "${CMAKE_SOURCE_DIR}/src/module/filter_classifier.cpp"
-)
-target_include_directories(nukex4_module_legacy_testlib PUBLIC
-    "${CMAKE_SOURCE_DIR}/src/module"
-)
-target_link_libraries(nukex4_module_legacy_testlib PUBLIC cfitsio)
-
+# Module-layer tests (auto-selector, stretch factory, Phase 8 fallback)
 add_library(nukex4_module_testlib OBJECT
     "${CMAKE_SOURCE_DIR}/src/module/stretch_auto_selector.cpp"
     "${CMAKE_SOURCE_DIR}/src/module/stretch_factory.cpp"
@@ -137,8 +119,6 @@ target_include_directories(nukex4_module_testlib PUBLIC
 )
 target_link_libraries(nukex4_module_testlib PUBLIC nukex4_stretch nukex4_io)
 
-nukex_add_test(test_fits_metadata unit/module/test_fits_metadata.cpp nukex4_module_legacy_testlib)
-nukex_add_test(test_filter_classifier unit/module/test_filter_classifier.cpp nukex4_module_legacy_testlib)
 nukex_add_test(test_stretch_auto_selector unit/module/test_stretch_auto_selector.cpp nukex4_module_testlib)
 nukex_add_test(test_stretch_factory unit/module/test_stretch_factory.cpp nukex4_module_testlib)
 nukex_add_test(test_phase8_fallback unit/module/test_phase8_fallback.cpp nukex4_stretch nukex4_learning sqlite3_vendored)
