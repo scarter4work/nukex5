@@ -70,13 +70,16 @@ nukex_add_test(test_cache_sig_dispatch unit/stacker/test_cache_sig_dispatch.cpp 
 add_library(test_util STATIC
     util/png_writer.cpp
     util/test_data_loader.cpp
+    util/synthetic_fits.cpp
 )
 target_include_directories(test_util PUBLIC
     "${CMAKE_SOURCE_DIR}/test/util"
     "${CMAKE_SOURCE_DIR}/third_party/stb"
     "${CMAKE_SOURCE_DIR}/third_party/catch2"
 )
-target_link_libraries(test_util PUBLIC nukex4_io nukex4_stretch)
+target_link_libraries(test_util PUBLIC nukex4_io nukex4_stretch nukex4_calibration PRIVATE cfitsio)
+
+nukex_add_test(test_synthetic_fits unit/io/test_synthetic_fits.cpp test_util nukex4_calibration nukex4_io)
 
 nukex_add_test(test_stretch_pipeline unit/stretch/test_stretch_pipeline.cpp nukex4_stretch)
 nukex_add_test(test_mtf unit/stretch/test_mtf.cpp nukex4_stretch test_util)
