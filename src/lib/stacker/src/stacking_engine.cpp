@@ -196,9 +196,10 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     if (first_filter.cls == FilterClass::UNKNOWN && bayer != BayerPattern::NONE) {
         ExecuteResult err{};
         err.ok    = false;
-        err.error = "FILTER='" + first_filter.name + "' on Bayer frame not in QE DB. " +
-                    "Add it to ~/.nukex4/qe_overrides.json (see docs) and retry, " +
-                    "or remove the FILTER keyword to default to plain OSC.";
+        err.error = "FILTER='" + first_filter.name + "' on Bayer frame not in QE DB. "
+                    "Rename FILTER to a known spelling, or add the filter to a "
+                    "qe_overrides.json file and select it with the QE override picker "
+                    "(see docs/qe_overrides_format.md). Remove FILTER to stack as plain OSC.";
         obs.message(err.error);
         return err;
     }
@@ -329,7 +330,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         bool frame_is_bayer = parse_bayer_pattern(meta.bayer_pattern) != BayerPattern::NONE;
         if (frame_filter.cls == FilterClass::UNKNOWN && frame_is_bayer) {
             obs.advance(1, "  skipped — unknown FILTER='" + frame_filter.name +
-                           "' on Bayer frame (add to qe_overrides.json to recover)");
+                           "' on Bayer frame (add it to a qe_overrides.json selected in the NukeX interface to recover)");
             // Filter rejection: the frame was skipped because its FILTER
             // keyword is not present in the QE database. This is not an
             // alignment failure — the aligner was never invoked. Track it
