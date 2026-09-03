@@ -2,9 +2,10 @@
 #
 # NukeX v4 — release packaging driver.
 #
-# Produces a PI-compatible release tarball from the current build and
-# updates updates.xri to reference it.  Does NOT bump the version string
-# in NukeXModule.cpp, edit CHANGELOG.md, commit, tag, or push — those
+# Produces a PI-compatible release tarball (bin/ + share/) from the
+# current build and updates updates.xri to reference it.  Does NOT bump
+# the version string in NukeXModule.cpp, edit CHANGELOG.md, commit, tag,
+# or push — those
 # steps require human decisions (release notes text, tag name) and stay
 # manual.  See CLAUDE.md "PixInsight Release Workflow" for the full
 # end-to-end checklist.
@@ -86,10 +87,15 @@ package_release() {
     cp "${MODULE_SO}"   "${REPO_DIR}/bin/"
     cp "${MODULE_XSGN}" "${REPO_DIR}/bin/"
 
+    echo "=== Staging share/ ==="
+    rm -rf "${REPO_DIR}/share"
+    mkdir -p "${REPO_DIR}/share"
+    cp "${REPO}/share/qe_database.json" "${REPO_DIR}/share/"
+
     DATE="$(date +%Y%m%d)"
     TAR="${REPO_DIR}/${DATE}-linux-x64-NukeX.tar.gz"
     echo "=== Creating tarball ${TAR} ==="
-    tar -C "${REPO_DIR}" -czf "${TAR}" bin/
+    tar -C "${REPO_DIR}" -czf "${TAR}" bin/ share/
     NEW_SHA1="$(sha1sum "${TAR}" | awk '{print $1}')"
     TAR_NAME="$(basename "${TAR}")"
     echo "sha1: ${NEW_SHA1}"
