@@ -84,6 +84,14 @@ def q_solve_lines(lines):
     return [l for l in lines if l["name"] in Q_SOLVE_LINES]
 
 
+def ordered_for_q_solve(lines):
+    """Canonical dual-NB line order the classifier documents: Ha/SII before
+    OIII, i.e. descending wavelength_nm. Applied to every dual-NB canonical
+    entry, whether it's derived (HaO3, S2O3) or product-mapped (L-eXtreme,
+    L-eNhance, L-Ultimate, ALP-T) -- source `passes` order is not guaranteed."""
+    return sorted(lines, key=lambda l: -l["wavelength_nm"])
+
+
 def median_lines(entries):
     """Same line set across several products -> one entry with median FWHM per line."""
     by_name = {}
@@ -119,13 +127,11 @@ def transform_filters(filters):
             single_sources.setdefault(q_lines[0]["name"], []).append(q_lines)
 
         if name in PRODUCT_CANONICAL:
-            out[PRODUCT_CANONICAL[name]] = {"type": "DUAL_NB", "lines": q_lines}
+            out[PRODUCT_CANONICAL[name]] = {"type": "DUAL_NB", "lines": ordered_for_q_solve(q_lines)}
 
     for key, sources in dual_sources.items():
         # Ha before OIII, SII before OIII: the order the classifier documents.
-        lines = median_lines(sources)
-        lines.sort(key=lambda l: -l["wavelength_nm"])
-        out[key] = {"type": "DUAL_NB", "lines": lines}
+        out[key] = {"type": "DUAL_NB", "lines": ordered_for_q_solve(median_lines(sources))}
     for line_name, sources in single_sources.items():
         out[line_name] = {"type": "NARROWBAND", "lines": median_lines(sources)}
 
