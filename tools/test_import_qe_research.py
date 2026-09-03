@@ -117,6 +117,18 @@ def test_single_line_canonicals_and_broadband_products(tmp_path):
     assert f["Optolong-Lpro"] == {"type": "BROADBAND", "lines": []}
 
 
+def test_product_canonical_line_order_enforced_regardless_of_source_order(tmp_path):
+    doc = json.loads(json.dumps(BASE))
+    doc["filters"]["Optolong-LeXtreme-7nm"] = {"type": "dual-narrowband",
+        "passes": [{"center_nm": 500.7, "fwhm_nm": 7.0}, {"center_nm": 656.3, "fwhm_nm": 7.0}]}  # OIII listed first
+    src, dst = write(tmp_path, doc)
+    r = run(src, dst)
+    assert r.returncode == 0, r.stderr
+    f = json.loads(dst.read_text())["filters"]
+    assert [l["name"] for l in f["L-eXtreme"]["lines"]] == ["Ha", "OIII"]
+    assert [l["name"] for l in f["HaO3"]["lines"]] == ["Ha", "OIII"]
+
+
 def test_generic_sony_osc_camera_is_mean_of_sony_osc_cameras(tmp_path):
     doc = json.loads(json.dumps(BASE))
     doc["sensors"]["IMX571"] = sensor({"501": {"R": 0.07, "Gr": 0.89, "Gb": 0.89, "B": 0.6},
