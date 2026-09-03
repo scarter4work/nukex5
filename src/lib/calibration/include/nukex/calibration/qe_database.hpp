@@ -43,6 +43,20 @@ public:
     LoadResult load_shipped(const std::string& path);
     LoadResult load_override(const std::string& path);
 
+    // Key used for the spec-6.3 unknown-INSTRUME fallback. Shipped by
+    // tools/import_qe_research.py as the mean of Sony-sensor OSC cameras.
+    static constexpr const char* kGenericOSCCamera = "generic_sony_imx_osc";
+
+    // Lowercase, alphanumerics only. Applied to every camera key on load and
+    // to every camera argument on lookup, so "ASI585MC" == "asi585mc".
+    static std::string normalize_camera_key(const std::string& raw);
+
+    // Maps a FITS INSTRUME value onto a DB camera key: exact normalised match
+    // first, else the longest DB key contained in the normalised INSTRUME
+    // ("ZWO ASI2400MC Pro" -> "asi2400mc"). Returns "" when nothing matches;
+    // callers decide between failing loud and kGenericOSCCamera.
+    std::string resolve_camera(const std::string& instrume) const;
+
     bool has_camera(const std::string& name) const;
     bool has_filter(const std::string& name) const;
 

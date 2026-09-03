@@ -76,3 +76,36 @@ TEST_CASE("QEDatabase: confidence enum reads from JSON", "[qe_database]") {
     REQUIRE(db.confidence("ASI585MC") == QEConfidence::HIGH);
     REQUIRE(db.confidence("Unknown")  == QEConfidence::UNKNOWN);
 }
+
+TEST_CASE("QEDatabase: camera keys normalise (case, punctuation)", "[qe_database]") {
+    REQUIRE(QEDatabase::normalize_camera_key("ZWO ASI2400MC Pro") == "zwoasi2400mcpro");
+    REQUIRE(QEDatabase::normalize_camera_key("asi_585-MC")        == "asi585mc");
+}
+
+TEST_CASE("QEDatabase: lookups are case-insensitive", "[qe_database]") {
+    QEDatabase db;
+    REQUIRE(db.load_shipped(fixture("minimal_db.json").string()).ok);
+    REQUIRE(db.has_camera("asi585mc"));
+    REQUIRE(db.has_camera("ASI585MC"));
+    REQUIRE(db.lookup_camera_qe("asi585mc", 656.3, Photosite::R) ==
+            db.lookup_camera_qe("ASI585MC", 656.3, Photosite::R));
+}
+
+TEST_CASE("QEDatabase: resolve_camera maps a real INSTRUME onto a DB key", "[qe_database]") {
+    QEDatabase db;
+    REQUIRE(db.load_shipped(fixture("minimal_db.json").string()).ok);
+    REQUIRE(db.resolve_camera("ASI585MC")            == "asi585mc");   // exact
+    REQUIRE(db.resolve_camera("ZWO ASI2600MC Pro")   == "asi2600mc");  // key is a substring
+    REQUIRE(db.resolve_camera("asi2600mc-pro")       == "asi2600mc");
+    REQUIRE(db.resolve_camera("ATR585M")             == "");           // no key contained
+    REQUIRE(db.resolve_camera("ASI585")              == "");           // partial key does not count
+    REQUIRE(db.resolve_camera("")                    == "");
+}
+
+TEST_CASE("QEDatabase: resolve_camera prefers the longest contained key", "[qe_database]") {
+    QEDatabase db;
+    REQUIRE(db.load_shipped(fixture("minimal_db.json").string()).ok);
+    REQUIRE(db.load_override(fixture("override_camera_pro.json").string()).ok);
+    REQUIRE(db.resolve_camera("ZWO ASI2600MC Pro") == "asi2600mcpro");
+    REQUIRE(db.resolve_camera("ZWO ASI2600MC")     == "asi2600mc");
+}

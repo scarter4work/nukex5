@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cctype>
 #include <fstream>
 #include <sstream>
 
@@ -100,7 +101,7 @@ LoadResult QEDatabase::parse_and_merge(const std::string& text, const char* cont
             }
             // Override semantics: replace whole camera record.
             // (Coarse but reflects spec: "override wins on key collision".)
-            cameras_[name] = std::move(cam);
+            cameras_[normalize_camera_key(name)] = std::move(cam);
         }
     }
 
@@ -126,8 +127,30 @@ LoadResult QEDatabase::parse_and_merge(const std::string& text, const char* cont
     return {true, ""};
 }
 
+std::string QEDatabase::normalize_camera_key(const std::string& raw) {
+    std::string out;
+    out.reserve(raw.size());
+    for (unsigned char c : raw) {
+        if (std::isalnum(c)) out.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return out;
+}
+
+std::string QEDatabase::resolve_camera(const std::string& instrume) const {
+    const std::string key = normalize_camera_key(instrume);
+    if (key.empty()) return {};
+    if (cameras_.count(key)) return key;
+    std::string best;
+    for (const auto& kv : cameras_) {
+        if (kv.first.size() > best.size() && key.find(kv.first) != std::string::npos) {
+            best = kv.first;
+        }
+    }
+    return best;
+}
+
 bool QEDatabase::has_camera(const std::string& name) const {
-    return cameras_.find(name) != cameras_.end();
+    return cameras_.find(normalize_camera_key(name)) != cameras_.end();
 }
 
 bool QEDatabase::has_filter(const std::string& name) const {
@@ -135,7 +158,7 @@ bool QEDatabase::has_filter(const std::string& name) const {
 }
 
 QEConfidence QEDatabase::confidence(const std::string& camera) const {
-    auto it = cameras_.find(camera);
+    auto it = cameras_.find(normalize_camera_key(camera));
     if (it == cameras_.end()) return QEConfidence::UNKNOWN;
     return it->second.confidence;
 }
@@ -143,7 +166,7 @@ QEConfidence QEDatabase::confidence(const std::string& camera) const {
 double QEDatabase::lookup_camera_qe(const std::string& camera,
                                     double             wavelength_nm,
                                     Photosite          photosite) const {
-    auto it = cameras_.find(camera);
+    auto it = cameras_.find(normalize_camera_key(camera));
     if (it == cameras_.end()) return 0.0;
     const auto& curve = it->second.qe_by_wavelength;
     if (curve.empty()) return 0.0;
