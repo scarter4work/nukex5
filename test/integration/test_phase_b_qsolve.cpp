@@ -114,17 +114,16 @@ TEST_CASE("Phase B Q-solve: HaO3 + S2O3 mixed → multi-source OIII merge",
 
 TEST_CASE("Phase B Q-solve: negative emission clamped, counter incremented",
           "[.integration][phase_b]") {
-    // Still gated: Task 20's writer interface does not include a
-    // write_synthetic_negative_emission_hao3 function, so there is no
-    // synthetic frame that engineers a negative Q-solve result. Left as
-    // SKIP rather than un-gated with a placeholder tolerance.
-#if 0
-    // A frame engineered so one emission-line value comes out negative from
-    // the linear solve (e.g. an OIII-dominated pixel fed to an Ha/OIII Q
-    // matrix that expects the opposite balance). The negative value must be
-    // clamped to 0, and negative_clamped_count must be > 0.
+    // No dedicated negative-emission writer exists (or is needed): a negative
+    // OIII target fed to write_synthetic_q_solved_hao3 engineers the negative
+    // Q-solve result directly through the existing writer.
+    // ASI585MC's Q keeps every photosite non-negative at (ha=0.8, oiii=-0.04)
+    // (B = 0.03*0.8 - 0.50*0.04 = 0.004; G ~ 0.222; R ~ 0.583), so the frame
+    // is a physically writable Bayer mosaic, but its Q-solve recovers
+    // OIII = -0.04, which the engine must clamp to 0 and count.
     auto tmp = fs::temp_directory_path() / "phase_b_negative.fits";
-    test_util::write_synthetic_negative_emission_hao3(tmp.string(), 16, 16, "ASI585MC");
+    test_util::write_synthetic_q_solved_hao3(tmp.string(), 16, 16, "ASI585MC",
+                                              /*ha*/0.8f, /*oiii*/-0.04f);
 
     StackingEngine::Config cfg;
     cfg.qe_database_path = (fs::path(NUKEX_TEST_FIXTURES_DIR) / "qe" / "minimal_db.json").string();
@@ -136,9 +135,6 @@ TEST_CASE("Phase B Q-solve: negative emission clamped, counter incremented",
     // All derived emission values must be >= 0 after clamping.
     for (float v : result.derived.slots.at("Ha"))   REQUIRE(v >= 0.0f);
     for (float v : result.derived.slots.at("OIII")) REQUIRE(v >= 0.0f);
-#else
-    SKIP("no synthetic writer for an engineered-negative-emission frame yet");
-#endif
 }
 
 TEST_CASE("Phase B Q-solve: unknown INSTRUME falls back to generic_sony_imx_osc with a warning",
