@@ -524,10 +524,17 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             case FilterClass::NARROWBAND_SINGLE:
             case FilterClass::BROADBAND_RGB: {
                 // Mono frames: channel 0 of the (post-debayer) image. The
-                // slot name comes from the filter — "L" for broadband-L,
+                // slot name comes from from_filter() — "L" for broadband-L,
                 // "Ha"/"OIII"/"SII" for narrowband-single, "R"/"G"/"B"
                 // for an explicit R/G/B mono filter.
-                const std::string& slot_name = frame_filter.name;
+                // Route by the slot merge() actually registered for this
+                // frame's class — from_filter() maps BROADBAND_L to "L"
+                // regardless of Filter.name (which may be "L_unnamed" or a
+                // raw unknown FILTER value such as a wheel-slot number),
+                // and R/G/B or Ha/OIII/SII to the name itself. Looking up
+                // frame_filter.name directly aborted on every mono frame
+                // whose FILTER was not literally "L".
+                const std::string& slot_name = per_frame_cfg.channel_names[0];
                 // One lookup per frame instead of one per pixel — same
                 // rationale as the OSC cases above. Abort if the slot is
                 // absent: it means merge() didn't register this filter's
