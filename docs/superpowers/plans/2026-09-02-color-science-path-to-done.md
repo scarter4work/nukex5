@@ -2201,12 +2201,31 @@ Human eyes required. Everything else is scripted. The dev module and database ar
 
 - [ ] **Step 1: v4 baseline for M16 HaO3**
 
-The E2E run in Task 21 saved v5 outputs under `/tmp/nukex_e2e/bayer_nb_hao3_m16/primary/`. For the v4 baseline, install the released v4.0.1.0 module once (PixInsight → Resources → Updates points at the nukex4 repository, or `~/projects/nukex4/repository/20260425-linux-x64-NukeX.tar.gz` → extract `bin/NukeX-pxm.so` → Install Modules…), run the same 12 M16 HaO3 frames with Auto stretch, save `NukeX_stretched` as `/tmp/nukex_e2e/m16_v4_stretched.fit`, then re-install the v5 dev module.
+**Corrected 2026-09-04.** Two things in the original text are wrong on this machine:
+
+1. `output_root` is no longer `/tmp/nukex_e2e` — `/tmp` is tmpfs here and the
+   frame cache written there OOM-killed a run. Outputs are now under
+   `~/.cache/nukex_e2e/`.
+2. **The released v4.0.1.0 binary cannot be used as the baseline: it does not
+   load.** It links `libglog.so.0` and Fedora 44 ships only `libglog.so.2`;
+   PixInsight reports `NukeX is not defined`.
+
+Use the **v4.0.1.0 source rebuilt with today's toolchain** instead, at
+`~/projects/nukex4/build/src/module/NukeX-pxm.so` (already built and verified
+this session — it reproduces v5 HEAD byte-for-byte on NGC7635, which is how
+we know the overhaul did not disturb the L-only path). That is also the
+*better* baseline: same compiler, same libraries, so the only variable left
+is the v5 code itself.
+
+Install it, run the same 12 M16 HaO3 frames with Auto stretch, save
+`NukeX_stretched` to `~/.cache/nukex_e2e/m16_v4_stretched.fit`, then
+re-install the v5 module and re-sign it.
 
 - [ ] **Step 2: Render comparison PNGs + the green histogram**
 
 ```bash
 python3 - <<'EOF'
+import os
 import numpy as np, matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from astropy.io import fits
@@ -2216,8 +2235,8 @@ def load(p):
     return np.moveaxis(a, 0, -1) if a.ndim == 3 and a.shape[0] in (3, 4) else a
 def png(a, path):
     a = np.clip(a, 0, 1); plt.imsave(path, (a * 255).astype("uint8"))
-v4 = load("/tmp/nukex_e2e/m16_v4_stretched.fit")
-v5 = load("/tmp/nukex_e2e/bayer_nb_hao3_m16/primary/stretched.fit")
+v4 = load(os.path.expanduser("~/.cache/nukex_e2e/m16_v4_stretched.fit"))
+v5 = load(os.path.expanduser("~/.cache/nukex_e2e/bayer_nb_hao3_m16/primary/stretched.fit"))
 png(v4, f"{out}/M16_HaO3_v4.0.1.0_baseline.png"); png(v5, f"{out}/M16_HaO3_v5.png")
 fig, ax = plt.subplots(figsize=(8, 4))
 for name, img in (("v4.0.1.0", v4), ("v5", v5)):
@@ -2225,8 +2244,8 @@ for name, img in (("v4.0.1.0", v4), ("v5", v5)):
         g_excess = img[..., 1] - 0.5 * (img[..., 0] + img[..., 2])
         ax.hist(g_excess.ravel(), bins=200, range=(-0.3, 0.3), histtype="step", label=name)
 ax.set_xlabel("G - (R+B)/2 per pixel"); ax.legend(); fig.savefig(f"{out}/M16_HaO3_green_histogram.png", dpi=120)
-png(load("/tmp/nukex_e2e/mono_lrgb_m27_2025/primary/stretched.fit"), f"{out}/M27_LRGB_v5.png")
-png(load("/tmp/nukex_e2e/bayer_rgb_m27_2023/primary/stretched.fit"), f"{out}/M27_OSC_v5.png")
+png(load(os.path.expanduser("~/.cache/nukex_e2e/mono_lrgb_m27_2025/primary/stretched.fit")), f"{out}/M27_LRGB_v5.png")
+png(load(os.path.expanduser("~/.cache/nukex_e2e/bayer_rgb_m27_2023/primary/stretched.fit")), f"{out}/M27_OSC_v5.png")
 print("ok")
 EOF
 ```
