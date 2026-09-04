@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nukex/alignment/channel_registration.hpp"
 #include "nukex/alignment/types.hpp"
 #include "nukex/io/image.hpp"
 
@@ -35,6 +36,20 @@ public:
     /// Pixels outside the transformed boundary get value 0.
     static Image warp(const Image& source, const HomographyMatrix& H,
                       int output_width, int output_height);
+
+    /// Warp, additionally registering each channel to the reference channel.
+    ///
+    /// H_inv maps an output pixel to where the REFERENCE channel sees it in
+    /// the source. A_c then maps that to where channel c sees it. So the
+    /// sample position for channel c is A_c(H_inv(x, y)) -- one resample per
+    /// channel, exactly as the plain warp does, with the correction folded in
+    /// rather than applied as a second pass.
+    ///
+    /// An empty `channels`, or an identity entry within it, takes the same
+    /// path as the four-argument overload for that channel.
+    static Image warp(const Image& source, const HomographyMatrix& H,
+                      int output_width, int output_height,
+                      const ChannelTransforms& channels);
 
     /// Correct a meridian-flipped homography by pre-multiplying with
     /// a 180-degree rotation about the image center.
