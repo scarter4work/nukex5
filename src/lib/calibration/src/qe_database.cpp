@@ -10,6 +10,68 @@ namespace nukex {
 
 namespace {
 
+// Which side of the mono/colour split a name or a DB "type" field lands on.
+enum class SensorKind { UNKNOWN, MONO, OSC };
+
+// Every digit in a string, in order: "IMX585" -> "585", "Panasonic-MN34230"
+// -> "34230". Used to compare a sensor designation against the number a
+// vendor put in a product name.
+std::string digits_of(const std::string& s) {
+    std::string d;
+    for (unsigned char c : s)
+        if (std::isdigit(c)) d.push_back(static_cast<char>(c));
+    return d;
+}
+
+// Split a normalised product name into its trailing number and the vendor's
+// mono/colour marker. The marker sits immediately after the number -- ZWO
+// writes MM/MC, others a bare M/C -- and anything past it ("pro") is noise.
+//   "atr585m"     -> ("585",  MONO)
+//   "asi2600mcpro"-> ("2600", OSC)
+//   "asi585"      -> false: no marker, so mono vs colour is a coin flip.
+// The LAST run of digits in a normalised name, with the offset just past
+// it: "asi2600mcpro" -> "2600", "qhy5iii462c" -> "462" (not "5462" -- a
+// vendor's series digits are not part of the model number).
+std::string trailing_number(const std::string& key, size_t* number_end = nullptr) {
+    size_t end   = 0;
+    bool   found = false;
+    for (size_t i = key.size(); i-- > 0; ) {
+        if (std::isdigit(static_cast<unsigned char>(key[i]))) {
+            end = i + 1; found = true; break;
+        }
+    }
+    if (!found) return {};
+    size_t start = end;
+    while (start > 0 && std::isdigit(static_cast<unsigned char>(key[start - 1]))) --start;
+    if (number_end) *number_end = end;
+    return key.substr(start, end - start);
+}
+
+bool split_sensor_marker(const std::string& key,
+                         std::string&       number,
+                         SensorKind&        kind) {
+    size_t end = 0;
+    number = trailing_number(key, &end);
+    if (number.empty()) return false;
+
+    const std::string suffix = key.substr(end);
+    if      (suffix.rfind("mm", 0) == 0) kind = SensorKind::MONO;
+    else if (suffix.rfind("mc", 0) == 0) kind = SensorKind::OSC;
+    else if (suffix.rfind("m",  0) == 0) kind = SensorKind::MONO;
+    else if (suffix.rfind("c",  0) == 0) kind = SensorKind::OSC;
+    else return false;
+    return true;
+}
+
+SensorKind parse_sensor_kind(const std::string& type) {
+    std::string t;
+    for (unsigned char c : type)
+        if (std::isalpha(c)) t.push_back(static_cast<char>(std::tolower(c)));
+    if (t == "mono") return SensorKind::MONO;
+    if (t == "osc")  return SensorKind::OSC;
+    return SensorKind::UNKNOWN;
+}
+
 QEConfidence parse_confidence(const std::string& s) {
     if (s == "high")   return QEConfidence::HIGH;
     if (s == "medium") return QEConfidence::MEDIUM;
@@ -143,6 +205,10 @@ LoadResult QEDatabase::parse_and_merge(const std::string& text, const char* cont
         }
     }
 
+    // Both load_shipped and load_override land here, and an override can add
+    // cameras, so the index is rebuilt on every successful merge rather than
+    // once at construction.
+    rebuild_sensor_index();
     return {true, ""};
 }
 
@@ -170,7 +236,57 @@ std::string QEDatabase::resolve_camera(const std::string& instrume) const {
             best = kv.first;
         }
     }
-    return best;
+    if (!best.empty()) return best;
+
+    // Third tier: the silicon. A rebadged camera ("ATR585M") carries no DB
+    // product key, but its sensor number and mono/colour marker name a
+    // sensor whose QE curve is already in the DB under some other vendor's
+    // product name. Vendor branding is not QE-relevant; the sensor is. The
+    // comparison is against the entry's `sensor` field, never its product
+    // key, because the two disagree constantly -- ASI2600MM is an IMX571.
+    std::string number;
+    SensorKind  want = SensorKind::UNKNOWN;
+    if (!split_sensor_marker(key, number, want) || want == SensorKind::UNKNOWN)
+        return {};
+
+    auto it = sensor_index_.find(sensor_index_key(number, want == SensorKind::MONO));
+    return (it == sensor_index_.end()) ? std::string{} : it->second;
+}
+
+void QEDatabase::rebuild_sensor_index() {
+    sensor_index_.clear();
+    for (const auto& kv : cameras_) {
+        // The generic row is a caller's explicit fallback choice, never a
+        // resolution result -- reaching it by resolution would hide an
+        // unknown camera behind a confident-looking answer.
+        if (kv.first == kGenericOSCCamera) continue;
+
+        const SensorKind kind = parse_sensor_kind(kv.second.type);
+        if (kind == SensorKind::UNKNOWN) continue;
+        const bool mono = (kind == SensorKind::MONO);
+
+        // Register the vendor's product number AND the sensor's own
+        // designation, so both "2600" and "571" reach the ASI2600MM row.
+        // Indexing by (number, mono/colour) rather than by number alone is
+        // what makes this correct instead of merely convenient: ZWO's
+        // ASI294MC is an IMX294 while the ASI294MM is an IMX492, so one
+        // product number denotes different silicon on each side of the
+        // split, and no rule over the digits could resolve both.
+        const std::string numbers[2] = { trailing_number(kv.first),
+                                         digits_of(kv.second.sensor) };
+        for (const std::string& n : numbers) {
+            if (n.empty()) continue;
+            const std::string ik = sensor_index_key(n, mono);
+            auto slot = sensor_index_.find(ik);
+            if (slot == sensor_index_.end()) sensor_index_.emplace(ik, kv.first);
+            // Deterministic on ties, matching the contained-key tier above.
+            else if (kv.first < slot->second) slot->second = kv.first;
+        }
+    }
+}
+
+std::string QEDatabase::sensor_index_key(const std::string& number, bool mono) {
+    return number + (mono ? "|m" : "|c");
 }
 
 bool QEDatabase::has_camera(const std::string& name) const {
