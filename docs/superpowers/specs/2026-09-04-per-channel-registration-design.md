@@ -145,7 +145,7 @@ Every fallback is a rung on a ladder, and the console names the rung.
 | too few for translation | identity, frame named in the console |
 | a channel's per-star SNR too low to centroid | those stars dropped before fitting |
 | fitted \|s−1\| > 0.01, or \|tx\|/\|ty\| > 5 px | rejected as a bad solve, identity used |
-| star with a close neighbour | excluded, using the matcher's existing isolation test |
+| star with a neighbour within 13 px | excluded from every channel's fit |
 | composed transform within 0.01 px of identity everywhere | warp with `H` alone, skipping the per-channel path |
 
 The last row is what keeps "always automatic" honest: a well-corrected rig
@@ -153,6 +153,33 @@ never pays for interpolation it does not need, without a user-facing threshold
 to argue about.
 
 A frame that cannot be measured is stacked as it is. Nothing is ever guessed.
+
+### The centroid, which is where the accuracy actually comes from
+
+The fit is four parameters over hundreds of stars, so it is not the fit that
+limits accuracy -- it is the per-star centroid. Three choices there were
+settled by simulating a known transform and measuring what came back, and each
+one moved the result by more than the fit ever could:
+
+| choice | wrong answer | right answer | worst error |
+|---|---|---|---|
+| box half-width | 4 px | **6 px** | 0.052 -> 0.005 |
+| background | minimum of the border | **median of the border** | 0.217 -> 0.057 |
+| passes | 1 | **2** | 0.057 -> 0.019 |
+
+The background row is the important one and the least obvious. The minimum of
+a noisy ring is biased low, subtracting too little leaves a pedestal under the
+star, and a pedestal pulls an intensity-weighted centroid toward the centre of
+its own box -- so the error depends on the star's sub-pixel phase and does not
+cancel between channels. The figures above are from the case that matters
+most, a star five times fainter in red than in green, which is ordinary
+through a dual-narrowband filter.
+
+Neighbour exclusion is a separate filter rather than something the star
+detector already provides. Its `exclusion_radius` is 5 px and the centroid box
+is 13 px wide, so it permits exactly the neighbours that hurt. On a field
+where 30% of stars had a companion 7.6 px away the fit erred by 0.029 px using
+every star and 0.006 px using only the isolated ones.
 
 ## Testing
 
