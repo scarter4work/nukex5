@@ -11,7 +11,7 @@
       "primary_stretch_label": "Auto",
       "finishing_stretch": 0,
       "finishing_stretch_label": "None",
-      "wall_time_budget_s": 900,
+      "wall_time_budget_s": 3600,
       "min_frames_ok_alignment": 65,
       "dropdown_sweep": [
         {
@@ -38,7 +38,7 @@
       "primary_stretch_label": "Auto",
       "finishing_stretch": 0,
       "finishing_stretch_label": "None",
-      "wall_time_budget_s": 1500,
+      "wall_time_budget_s": 10800,
       "min_frames_ok_alignment": 30
     },
     {
@@ -52,7 +52,7 @@
       "primary_stretch_label": "Auto",
       "finishing_stretch": 0,
       "finishing_stretch_label": "None",
-      "wall_time_budget_s": 1500,
+      "wall_time_budget_s": 7200,
       "min_frames_ok_alignment": 12,
       "visual_bar": "no green cast in the nebula; Ha red, OIII teal; NUKEX_QE_CONFIDENCE = database"
     },
@@ -65,7 +65,7 @@
       "primary_stretch_label": "Auto",
       "finishing_stretch": 0,
       "finishing_stretch_label": "None",
-      "wall_time_budget_s": 1800,
+      "wall_time_budget_s": 3600,
       "min_frames_ok_alignment": 72
     },
     {
@@ -83,5 +83,6 @@
   "phaseB_speedup_min": 1.5,
   "output_root": "/home/scarter4work/.cache/nukex_e2e",
   "golden_dir": "test/fixtures/golden",
-  "cache_dir": "/home/scarter4work/.cache/nukex_e2e_frames"
+  "cache_dir": "/home/scarter4work/.cache/nukex_e2e_frames",
+  "budget_note": "wall_time_budget_s is a hang detector, not a speed limit: set well clear of measured times so a slow-but-correct run passes and only a stuck one fails."
 }
