@@ -51,11 +51,20 @@ public:
     // to every camera argument on lookup, so "ASI585MC" == "asi585mc".
     static std::string normalize_camera_key(const std::string& raw);
 
-    // Maps a FITS INSTRUME value onto a DB camera key: exact normalised match
-    // first, else the longest DB key contained in the normalised INSTRUME
-    // ("ZWO ASI2400MC Pro" -> "asi2400mc"). On a length tie between two
-    // contained keys, the lexicographically smaller key wins, so the result
-    // is deterministic regardless of the underlying map's iteration order.
+    // Maps a FITS INSTRUME value onto a DB camera key, in three tiers:
+    //   1. exact normalised match ("ASI585MC" -> "asi585mc");
+    //   2. the longest DB key contained in the normalised INSTRUME
+    //      ("ZWO ASI2400MC Pro" -> "asi2400mc");
+    //   3. the sensor itself, for rebadged cameras carrying no DB product
+    //      key: the trailing number plus the vendor's mono/colour marker
+    //      are matched against each entry's `sensor` field and `type`
+    //      ("ATR585M" -> IMX585 + mono -> "asi585mm"). Matching uses the
+    //      sensor field, never the product key -- ASI2600MM is an IMX571.
+    //      A name with no mono/colour marker ("ASI585") stays unresolved
+    //      rather than guessing between a sensor's mono and OSC variants,
+    //      and kGenericOSCCamera is never returned from this tier.
+    // On a tie within a tier the lexicographically smaller key wins, so the
+    // result is deterministic regardless of the map's iteration order.
     // Returns "" when nothing matches; callers decide between failing loud
     // and kGenericOSCCamera.
     std::string resolve_camera(const std::string& instrume) const;
@@ -79,6 +88,16 @@ public:
 private:
     std::unordered_map<std::string, CameraQE>       cameras_;
     std::unordered_map<std::string, FilterPassband> filters_;
+
+    // (model number, mono/colour) -> camera key, for the third resolution
+    // tier. Holds both the vendor product number and the sensor designation
+    // of every camera, read straight off the loaded entries: which sensor a
+    // product number denotes is a stored fact, never one derived from the
+    // digits. Rebuilt after each successful load or override merge.
+    std::unordered_map<std::string, std::string>    sensor_index_;
+
+    void rebuild_sensor_index();
+    static std::string sensor_index_key(const std::string& number, bool mono);
 
     LoadResult parse_and_merge(const std::string& text, const char* context);
 };

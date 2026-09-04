@@ -120,6 +120,57 @@ TEST_CASE("QEDatabase: resolve_camera breaks equal-length ties lexicographically
     REQUIRE(db.resolve_camera("ZWO ABC1 ZWO ABD1") == "zwoabc1");
 }
 
+TEST_CASE("QEDatabase: resolve_camera falls back to sensor + mono/OSC for a rebadged camera", "[qe_database]") {
+    QEDatabase db;
+    REQUIRE(db.load_shipped(fixture("minimal_db.json").string()).ok);
+    REQUIRE(db.load_override(fixture("override_sensor_rebadge.json").string()).ok);
+
+    // ATR585M is an IMX585 *mono* camera whose product name contains no DB
+    // key, so both product-name tiers miss. The sensor number and the mono
+    // marker still identify the sensor exactly, and its QE curve is already
+    // in the DB under another vendor's product name.
+    REQUIRE(db.resolve_camera("ATR585M")            == "asi585mm");
+    REQUIRE(db.resolve_camera("Player One 585MM")   == "asi585mm");
+
+    // The same sensor rebadged as a colour camera must land on the OSC row,
+    // not the mono one.
+    REQUIRE(db.resolve_camera("Foo 585MC")          == "asi585mc");
+
+    // A camera that names the SENSOR directly (as Altair and QHY do)
+    // resolves even though the product names share nothing at all.
+    REQUIRE(db.resolve_camera("Altair IMX571M")     == "asi2600mm");
+
+    // ...and so does one that names the ZWO PRODUCT number. That "2600
+    // means IMX571" is not derivable from the digits -- it is a fact the
+    // database already stores, and resolution reads it rather than
+    // guessing. Getting this from a rule over the number alone is not
+    // merely hard, it is impossible: ASI294MC is an IMX294 while ASI294MM
+    // is an IMX492, so the same number denotes different silicon on each
+    // side of the mono/colour split.
+    REQUIRE(db.resolve_camera("SomeCam-2600M Pro")  == "asi2600mm");
+
+    // Vendor noise after the marker does not defeat the match.
+    REQUIRE(db.resolve_camera("Rising 585M Pro")    == "asi585mm");
+}
+
+TEST_CASE("QEDatabase: sensor fallback refuses ambiguous or unknown sensors", "[qe_database]") {
+    QEDatabase db;
+    REQUIRE(db.load_shipped(fixture("minimal_db.json").string()).ok);
+    REQUIRE(db.load_override(fixture("override_sensor_rebadge.json").string()).ok);
+
+    // No mono/OSC marker after the digits: IMX585 has both a mono and an OSC
+    // row, so guessing would be a coin flip. Stay unresolved and let the
+    // caller decide between failing loud and the generic fallback.
+    REQUIRE(db.resolve_camera("ASI585")   == "");
+
+    // Sensor number matches nothing in the DB.
+    REQUIRE(db.resolve_camera("XYZ999M")  == "");
+
+    // The generic fallback row must never be reachable by sensor matching --
+    // it is a caller's explicit choice, not a resolution result.
+    REQUIRE(db.resolve_camera("generic")  == "");
+}
+
 TEST_CASE("QEDatabase: colliding normalised camera keys within one document -> loud fail", "[qe_database]") {
     QEDatabase db;
     REQUIRE(db.load_shipped(fixture("minimal_db.json").string()).ok);
