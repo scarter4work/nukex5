@@ -146,3 +146,113 @@ TEST_CASE("QEUpdater: a garbage signature is rejected without parsing the body",
     QEUpdater up(f, kBase, pub.data());
     REQUIRE(up.check(13).outcome == UpdateOutcome::BAD_SIGNATURE);
 }
+
+// ---------------------------------------------------------------- install()
+
+#include <filesystem>
+#include <fstream>
+#include <unistd.h>
+
+namespace fs = std::filesystem;
+
+static std::string temp_dest(const char* tag) {
+    fs::path p = fs::temp_directory_path() /
+                 ("nukex_qe_update_" + std::string(tag) + "_" +
+                  std::to_string(static_cast<long>(::getpid())));
+    fs::remove_all(p);
+    fs::create_directories(p);
+    return (p / "qe_database.json").string();
+}
+
+static std::string read_file(const std::string& p) {
+    std::ifstream in(p, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)),
+                        std::istreambuf_iterator<char>());
+}
+
+TEST_CASE("QEUpdater: a verified database installs atomically", "[qe_update]") {
+    FakeFetcher f;
+    auto pub = unhex(kTestPubHex);
+    serve(f, "qe_manifest.json", kManifestV14, kManifestV14Sig);
+    serve(f, "qe_database.json", kDbBody, kDbSig);
+
+    QEUpdater up(f, kBase, pub.data());
+    auto chk = up.check(13);
+    REQUIRE(chk.outcome == UpdateOutcome::AVAILABLE);
+
+    const std::string dest = temp_dest("ok");
+    REQUIRE(up.install(chk.manifest, dest) == UpdateOutcome::INSTALLED);
+    REQUIRE(read_file(dest) == std::string(kDbBody));
+    // A successful install leaves no scratch file behind.
+    REQUIRE_FALSE(fs::exists(dest + ".tmp"));
+}
+
+TEST_CASE("QEUpdater: a tampered database body is not installed", "[qe_update]") {
+    FakeFetcher f;
+    auto pub = unhex(kTestPubHex);
+    serve(f, "qe_manifest.json", kManifestV14, kManifestV14Sig);
+    // One trailing space: signature no longer covers these bytes.
+    serve(f, "qe_database.json", std::string(kDbBody) + " ", kDbSig);
+
+    QEUpdater up(f, kBase, pub.data());
+    auto chk = up.check(13);
+    const std::string dest = temp_dest("tamper");
+    REQUIRE(up.install(chk.manifest, dest) == UpdateOutcome::BAD_SIGNATURE);
+    REQUIRE_FALSE(fs::exists(dest));
+}
+
+TEST_CASE("QEUpdater: a validly signed database with the wrong digest is refused", "[qe_update]") {
+    FakeFetcher f;
+    auto pub = unhex(kTestPubHex);
+    // Manifest is genuine and correctly signed, but names a digest that is
+    // not this database's -- the substitution the digest check exists for.
+    serve(f, "qe_manifest.json", kManifestV14Bad, kManifestV14BadSig);
+    serve(f, "qe_database.json", kDbBody, kDbSig);
+
+    QEUpdater up(f, kBase, pub.data());
+    auto chk = up.check(13);
+    REQUIRE(chk.outcome == UpdateOutcome::AVAILABLE);
+    const std::string dest = temp_dest("digest");
+    REQUIRE(up.install(chk.manifest, dest) == UpdateOutcome::DIGEST_MISMATCH);
+    REQUIRE_FALSE(fs::exists(dest));
+}
+
+TEST_CASE("QEUpdater: an existing database survives a failed install", "[qe_update]") {
+    FakeFetcher f;
+    auto pub = unhex(kTestPubHex);
+    serve(f, "qe_manifest.json", kManifestV14Bad, kManifestV14BadSig);
+    serve(f, "qe_database.json", kDbBody, kDbSig);
+
+    const std::string dest = temp_dest("keep");
+    { std::ofstream out(dest, std::ios::binary); out << "PREVIOUS"; }
+
+    QEUpdater up(f, kBase, pub.data());
+    auto chk = up.check(13);
+    REQUIRE(up.install(chk.manifest, dest) == UpdateOutcome::DIGEST_MISMATCH);
+    REQUIRE(read_file(dest) == "PREVIOUS");
+}
+
+TEST_CASE("QEUpdater: an unreachable database is OFFLINE, not a failure", "[qe_update]") {
+    FakeFetcher f;
+    auto pub = unhex(kTestPubHex);
+    serve(f, "qe_manifest.json", kManifestV14, kManifestV14Sig);
+    // Database intentionally not served.
+
+    QEUpdater up(f, kBase, pub.data());
+    auto chk = up.check(13);
+    const std::string dest = temp_dest("gone");
+    REQUIRE(up.install(chk.manifest, dest) == UpdateOutcome::OFFLINE);
+    REQUIRE_FALSE(fs::exists(dest));
+}
+
+TEST_CASE("QEUpdater: an unwritable destination reports INSTALL_FAILED", "[qe_update]") {
+    FakeFetcher f;
+    auto pub = unhex(kTestPubHex);
+    serve(f, "qe_manifest.json", kManifestV14, kManifestV14Sig);
+    serve(f, "qe_database.json", kDbBody, kDbSig);
+
+    QEUpdater up(f, kBase, pub.data());
+    auto chk = up.check(13);
+    REQUIRE(up.install(chk.manifest, "/proc/nukex_cannot_write/qe_database.json")
+            == UpdateOutcome::INSTALL_FAILED);
+}
