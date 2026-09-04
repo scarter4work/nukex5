@@ -4,13 +4,6 @@
 
 namespace nukex {
 
-namespace {
-/// A channel correction smaller than this at the field corner is not worth a
-/// resample: it is below the centroid noise floor measured on real data
-/// (0.058 px between blue and green on the M3 set) by a wide margin.
-constexpr double kNegligibleChannelShiftPx = 0.01;
-}
-
 FrameAligner::FrameAligner(const Config& config) : config_(config) {}
 
 FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_index) {
