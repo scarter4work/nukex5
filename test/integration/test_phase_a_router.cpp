@@ -38,7 +38,7 @@ TEST_CASE("Phase A: BROADBAND_OSC frame synthesizes L slot",
     REQUIRE(result.cube->channel_config.slot_index("L") != -1);
     int  L_idx = result.cube->channel_config.slot_index("L");
     auto& px   = result.cube->at(8, 8);
-    REQUIRE(px.welford[L_idx].mean == Catch::Approx(0.5f).margin(0.05f));
+    REQUIRE(px.channel(L_idx).welford.mean == Catch::Approx(0.5f).margin(0.05f));
 }
 
 TEST_CASE("Phase A: HaO3 dual-NB frame routes into R_HaO3/G_HaO3/B_HaO3",
@@ -119,7 +119,7 @@ TEST_CASE("Phase A: missing FILTER on mono (L_unnamed) routes into the L slot",
     REQUIRE(result.ok);
     int L_idx = result.cube->channel_config.slot_index("L");
     REQUIRE(L_idx != -1);
-    REQUIRE(result.cube->at(8, 8).welford[L_idx].mean == Catch::Approx(0.5f).margin(0.05f));
+    REQUIRE(result.cube->at(8, 8).channel(L_idx).welford.mean == Catch::Approx(0.5f).margin(0.05f));
 }
 
 TEST_CASE("Phase A: unknown FILTER on mono routes into the L slot (spec 6.3, e.g. a wheel slot number)",
@@ -135,5 +135,5 @@ TEST_CASE("Phase A: unknown FILTER on mono routes into the L slot (spec 6.3, e.g
     REQUIRE(result.ok);
     int L_idx = result.cube->channel_config.slot_index("L");
     REQUIRE(L_idx != -1);
-    REQUIRE(result.cube->at(8, 8).welford[L_idx].mean == Catch::Approx(0.5f).margin(0.05f));
+    REQUIRE(result.cube->at(8, 8).channel(L_idx).welford.mean == Catch::Approx(0.5f).margin(0.05f));
 }

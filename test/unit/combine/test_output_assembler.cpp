@@ -20,10 +20,10 @@ TEST_CASE("OutputAssembler: quality map has 4 channels", "[assembler]") {
     for (int y = 0; y < 8; y++)
         for (int x = 0; x < 8; x++) {
             auto& v = cube.at(x, y);
-            v.distribution[0].shape = DistributionShape::GAUSSIAN;
-            v.distribution[0].true_signal_estimate = 0.5f;
-            v.distribution[0].signal_uncertainty = 0.01f;
-            v.distribution[0].confidence = 0.9f;
+            v.channel(0).distribution.shape = DistributionShape::GAUSSIAN;
+            v.channel(0).distribution.true_signal_estimate = 0.5f;
+            v.channel(0).distribution.signal_uncertainty = 0.01f;
+            v.channel(0).distribution.confidence = 0.9f;
             v.dominant_shape = DistributionShape::GAUSSIAN;
         }
 

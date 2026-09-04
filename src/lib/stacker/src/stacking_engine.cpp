@@ -138,7 +138,7 @@ float compute_median_fwhm(const StarCatalog& catalog) {
 void compute_dominant_shape(SubcubeVoxel& voxel, int n_ch) {
     int counts[7] = {};
     for (int ch = 0; ch < n_ch; ch++) {
-        int s = static_cast<int>(voxel.distribution[ch].shape);
+        int s = static_cast<int>(voxel.channel(ch).distribution.shape);
         if (s >= 0 && s < 7) counts[s]++;
     }
     int best = 0;
@@ -229,6 +229,17 @@ StackingEngine::ExecuteResult StackingEngine::execute(
 
     // Allocate cube
     Cube cube(out_width, out_height, ch_config);
+    {
+        // The single number that decides whether this run fits in RAM. Each
+        // voxel is sized to the stack's real channel count, so this scales
+        // with n_channels rather than the MAX_CHANNELS ceiling.
+        char msg[192];
+        std::snprintf(msg, sizeof(msg),
+                      "Voxel record: %.2f GB (%dx%d px x %d channels, %zu B/voxel)",
+                      static_cast<double>(cube.bytes_allocated()) / 1e9,
+                      out_width, out_height, n_ch, cube.voxel_stride());
+        obs.message(msg);
+    }
 
     // Task 10A: one FrameCache per (width, height, n_ch) signature.
     //
@@ -298,11 +309,11 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     auto route_sample_idx = [&](SubcubeVoxel& voxel,
                                 int idx,
                                 float value) {
-        voxel.welford[idx].update(value);
-        if (voxel.welford[idx].count() == 1) {
-            voxel.histogram[idx].initialize_range(value - 0.1f, value + 0.1f);
+        voxel.channel(idx).welford.update(value);
+        if (voxel.channel(idx).welford.count() == 1) {
+            voxel.channel(idx).histogram.initialize_range(value - 0.1f, value + 0.1f);
         }
-        voxel.histogram[idx].update(value);
+        voxel.channel(idx).histogram.update(value);
     };
 
     for (int f = 0; f < n_frames; f++) {
@@ -791,14 +802,14 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         for (int x = 0; x < out_width; x++) {
             auto& voxel = cube.at(x, y);
             float avg_snr = 0.0f;
-            for (int ch = 0; ch < n_ch; ch++) avg_snr += voxel.snr[ch];
+            for (int ch = 0; ch < n_ch; ch++) avg_snr += voxel.channel(ch).snr;
             avg_snr /= n_ch;
             float cloud_fraction = (voxel.n_frames > 0) ?
                 static_cast<float>(voxel.cloud_frame_count) / voxel.n_frames : 0.0f;
-            voxel.quality_score = voxel.distribution[0].confidence
+            voxel.quality_score = voxel.channel(0).distribution.confidence
                 * (1.0f - cloud_fraction)
                 * std::min(1.0f, avg_snr / 50.0f);
-            voxel.confidence = voxel.distribution[0].confidence;
+            voxel.confidence = voxel.channel(0).distribution.confidence;
         }
     }
 
@@ -954,9 +965,9 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                     // any future divergence.
                     const auto& vox = cube.at(x, y);
                     const int64_t n_samples = static_cast<int64_t>(std::min({
-                        vox.welford[ri].count(),
-                        vox.welford[gi].count(),
-                        vox.welford[bi].count()
+                        vox.channel(ri).welford.count(),
+                        vox.channel(gi).welford.count(),
+                        vox.channel(bi).welford.count()
                     }));
 
                     // NOTE: this block is single-threaded today. If anyone

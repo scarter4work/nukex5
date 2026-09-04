@@ -3,11 +3,20 @@
 #include "nukex/core/types.hpp"
 #include "nukex/core/channel_config.hpp"
 #include "nukex/core/voxel.hpp"
-#include <vector>
+#include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <new>
 
 namespace nukex {
 
+/// The full-frame voxel record, one SubcubeVoxel per (x, y).
+///
+/// Records are runtime-sized: each is `voxel_record_size(n_channels)` bytes and
+/// they are laid end to end in a single allocation, so a 1-channel stack costs
+/// a fraction of what an 8-channel one does. The cube previously held a
+/// std::vector<SubcubeVoxel> whose element carried MAX_CHANNELS worth of
+/// per-channel arrays regardless of the stack.
 class Cube {
 public:
     int           width  = 0;
@@ -18,17 +27,39 @@ public:
     Cube(int w, int h, const ChannelConfig& config);
     Cube() = default;
 
-    SubcubeVoxel&       at(int x, int y)       { return voxels_[y * width + x]; }
-    const SubcubeVoxel& at(int x, int y) const { return voxels_[y * width + x]; }
+    SubcubeVoxel& at(int x, int y) {
+        return *std::launder(reinterpret_cast<SubcubeVoxel*>(
+            storage_.get() + offset_of(x, y)));
+    }
+    const SubcubeVoxel& at(int x, int y) const {
+        return *std::launder(reinterpret_cast<const SubcubeVoxel*>(
+            storage_.get() + offset_of(x, y)));
+    }
 
     int total_pixels() const { return width * height; }
+
+    /// Bytes one voxel occupies, including its trailing channel records.
+    std::size_t voxel_stride() const { return stride_; }
+
+    /// Total bytes held by the voxel record. Worth logging before a stack:
+    /// this is the number that decides whether the run fits in RAM.
+    std::size_t bytes_allocated() const {
+        return stride_ * static_cast<std::size_t>(width)
+                       * static_cast<std::size_t>(height);
+    }
 
     bool is_valid_coord(int x, int y) const {
         return x >= 0 && x < width && y >= 0 && y < height;
     }
 
 private:
-    std::vector<SubcubeVoxel> voxels_;
+    std::size_t offset_of(int x, int y) const {
+        return (static_cast<std::size_t>(y) * static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(x)) * stride_;
+    }
+
+    std::size_t                     stride_ = 0;
+    std::unique_ptr<std::byte[]>    storage_;
 };
 
 } // namespace nukex

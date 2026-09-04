@@ -16,7 +16,7 @@ Image OutputAssembler::assemble_quality_map(const Cube& cube) {
             float min_confidence = 1.0f;
 
             for (int ch = 0; ch < n_ch; ch++) {
-                const auto& dist = v.distribution[ch];
+                const auto& dist = v.channel(ch).distribution;
                 avg_signal += dist.true_signal_estimate;
                 max_uncertainty = std::max(max_uncertainty, dist.signal_uncertainty);
                 min_confidence = std::min(min_confidence, dist.confidence);
