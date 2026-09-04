@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "description": "Phase 7 E2E validation corpus. Extend as more test datasets become available. Only NGC7635 LRGB-mono is currently configured; other cases are placeholders marked skip:true.",
+  "schema_version": 2,
+  "description": "v5 E2E corpus: preserved v4 LRGB-mono floor + OSC, dual-NB (M16 HaO3) and LRGB-mono (M27 2025) cases",
   "cases": [
     {
       "name": "lrgb_mono_ngc7635",
@@ -14,29 +14,74 @@
       "wall_time_budget_s": 900,
       "min_frames_ok_alignment": 65,
       "dropdown_sweep": [
-        { "primary_stretch": 2, "label": "GHS" },
-        { "primary_stretch": 3, "label": "MTF" },
-        { "primary_stretch": 4, "label": "ArcSinh" }
-      ]
+        {
+          "primary_stretch": 2,
+          "label": "GHS"
+        },
+        {
+          "primary_stretch": 3,
+          "label": "MTF"
+        },
+        {
+          "primary_stretch": 4,
+          "label": "ArcSinh"
+        }
+      ],
+      "golden_frozen": true
     },
     {
-      "name": "bayer_rgb_placeholder",
-      "skip": true,
-      "skip_reason": "no Bayer-RGB test corpus configured on this machine"
+      "name": "bayer_rgb_m27_2023",
+      "filter_class_expected": "BROADBAND_OSC",
+      "light_dir": "/mnt/qnap/astro_data/4_12_2023/M27",
+      "flat_dir": "",
+      "primary_stretch": 0,
+      "primary_stretch_label": "Auto",
+      "finishing_stretch": 0,
+      "finishing_stretch_label": "None",
+      "wall_time_budget_s": 1500,
+      "min_frames_ok_alignment": 30
     },
     {
-      "name": "narrowband_placeholder",
-      "skip": true,
-      "skip_reason": "no narrowband LRGB test corpus configured on this machine"
+      "name": "bayer_nb_hao3_m16",
+      "filter_class_expected": "DUAL_NB_OSC",
+      "light_dir": "/home/scarter4work/projects/processing/M16",
+      "light_glob": "*HaO3*.fit",
+      "max_frames": 12,
+      "flat_dir": "",
+      "primary_stretch": 0,
+      "primary_stretch_label": "Auto",
+      "finishing_stretch": 0,
+      "finishing_stretch_label": "None",
+      "wall_time_budget_s": 1500,
+      "min_frames_ok_alignment": 12,
+      "visual_bar": "no green cast in the nebula; Ha red, OIII teal; NUKEX_QE_CONFIDENCE = database"
     },
     {
-      "name": "lrgb_mono_large_stress_placeholder",
+      "name": "mono_lrgb_m27_2025",
+      "filter_class_expected": "BROADBAND_L + BROADBAND_RGB",
+      "light_dir": "/mnt/qnap/astro_data/9_1_2025/M27",
+      "flat_dir": "",
+      "primary_stretch": 0,
+      "primary_stretch_label": "Auto",
+      "finishing_stretch": 0,
+      "finishing_stretch_label": "None",
+      "wall_time_budget_s": 1800,
+      "min_frames_ok_alignment": 72
+    },
+    {
+      "name": "bayer_nb_s2o3_placeholder",
       "skip": true,
-      "skip_reason": "no large-frame-count stress corpus configured on this machine"
+      "skip_reason": "no S2O3 corpus on this machine"
+    },
+    {
+      "name": "lrgbsho_placeholder",
+      "skip": true,
+      "skip_reason": "no mixed L+R+G+B+HaO3 corpus on this machine"
     }
   ],
   "phaseB_baseline_file": "phaseB_baseline_ms.txt",
   "phaseB_speedup_min": 1.5,
-  "output_root": "/tmp/nukex_e2e",
-  "golden_dir": "test/fixtures/golden"
+  "output_root": "/home/scarter4work/.cache/nukex_e2e",
+  "golden_dir": "test/fixtures/golden",
+  "cache_dir": "/home/scarter4work/.cache/nukex_e2e_frames"
 }
