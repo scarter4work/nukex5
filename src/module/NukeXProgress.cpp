@@ -176,7 +176,7 @@ void NukeXProgress::advance( int steps, const std::string& detail )
    {
       std::ostringstream os;
       os << phase.current << '/' << phase.total;
-      if ( !detail.empty() ) os << " — " << detail;
+      if ( !detail.empty() ) os << " -- " << detail;
       emit_sideband( "PROGRESS", os.str() );
    }
 }

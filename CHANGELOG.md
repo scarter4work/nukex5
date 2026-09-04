@@ -1,5 +1,34 @@
 # NukeX — Changelog
 
+## v5.0.0.2 — 2026-09-04
+
+All four found in the first real user session on v5.0.0.1, on 53 Optolong
+L-Quad Enhance frames.
+
+### Fixed
+- **A quad-band filter such as L-Quad Enhance now stacks.** Its measured
+  quantum efficiency shipped from the start, but no spelling reached it: the
+  filter covers Ha, OIII and SII, and only two-line sets had canonical names,
+  so the batch stopped at start with the data sitting in the database. There
+  is now a three-line canonical, `HaO3S2`, derived from the same measurements
+  the database was built from, and `Lqef`, `L-QEF`, `L-Quad`, `L-Quad-Enhance`
+  and `L-Synergy` all resolve to it. Three lines on a colour sensor is exactly
+  determined, so the decomposition is better conditioned than a two-line one,
+  not worse. Ships as camera-database v2, which the in-module updater will
+  offer.
+- **The console no longer blames your installation for someone else's
+  problem.** Every failed run appended "share/qe_database.json is missing from
+  the plugin install", including runs one line after the console had announced
+  updating that very database. The hint now appears only when the file is
+  actually absent.
+- **Text with punctuation in it renders correctly.** The interface and console
+  passed UTF-8 characters to PixInsight, which reads them as ISO-8859-1, so
+  every em dash and ellipsis arrived as garbage — the "Browse…" button read
+  "Browseâ€¦". Eight strings affected.
+- **The module reports its own version.** The console banner, the process
+  description and the window title were hardcoded to "NukeX v4" on a v5 build.
+  They now read the version header, so they cannot drift again.
+
 ## v5.0.0.1 — 2026-09-04
 
 Two defects found by an adversarial review of the v5.0.0.0 engine changes.

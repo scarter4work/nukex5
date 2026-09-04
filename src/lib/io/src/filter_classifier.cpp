@@ -40,6 +40,23 @@ const std::unordered_map<std::string, KnownFilter>& known_table() {
         {"lenhance",  {FilterClass::DUAL_NB_OSC,       "L-eNhance",  578.5, 25.0}},
         {"lultimate", {FilterClass::DUAL_NB_OSC,       "L-Ultimate", 578.5,  3.0}},
         {"alpt",      {FilterClass::DUAL_NB_OSC,       "ALP-T",      578.5,  5.0}},
+
+        // Three-line filters. A quad-band product passes Hb as well, but Hb is
+        // not a Q-solve line -- at 486 nm it lands on the same B/G photosites
+        // as OIII and would make the Q matrix rank-deficient -- so what these
+        // contribute is Ha + OIII + SII. That is exactly determined on an RGB
+        // sensor. Until 2026-09-04 the set had no canonical name, so a real
+        // batch of L-Quad Enhance frames stopped at start with its measured QE
+        // sitting in the database, unreachable.
+        {"hao3s2",    {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
+        {"haoiiisii", {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
+        {"lqef",      {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
+        {"lquad",     {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
+        {"lquadenhance",
+                      {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
+        {"optolonglquadenhance",
+                      {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
+        {"lsynergy",  {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
     };
     return table;
 }

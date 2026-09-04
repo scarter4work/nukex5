@@ -1920,6 +1920,26 @@
       ],
       "type": "DUAL_NB"
     },
+    "HaO3S2": {
+      "lines": [
+        {
+          "fwhm_nm": 15.0,
+          "name": "SII",
+          "wavelength_nm": 672.4
+        },
+        {
+          "fwhm_nm": 25.0,
+          "name": "Ha",
+          "wavelength_nm": 656.3
+        },
+        {
+          "fwhm_nm": 15.0,
+          "name": "OIII",
+          "wavelength_nm": 500.7
+        }
+      ],
+      "type": "DUAL_NB"
+    },
     "Hutech-LPS-V4": {
       "lines": [],
       "type": "BROADBAND"

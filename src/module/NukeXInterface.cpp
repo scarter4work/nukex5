@@ -73,7 +73,7 @@ bool NukeXInterface::Launch( const MetaProcess&, const ProcessImplementation*, b
    if ( GUI == nullptr )
    {
       GUI = new GUIData( *this );
-      SetWindowTitle( "NukeX v4" );
+      SetWindowTitle( "NukeX" );
       UpdateControls();
       UpdateDatabaseStatusLabel();
       // Interval-gated, silent when offline or up to date. This is what
@@ -180,7 +180,7 @@ NukeXInterface::GUIData::GUIData( NukeXInterface& w )
    FlatFrames_TreeBox.SetToolTip(
       "Optional flat-field frames.  Enabled flats are combined into a master "
       "flat and applied per-channel before alignment.  Leave empty if you "
-      "have no flats — NukeX will skip calibration." );
+      "have no flats -- NukeX will skip calibration." );
    FlatFrames_Add_Button.SetText( "Add" );
    FlatFrames_Add_Button.SetToolTip( "Add FITS files (.fit/.fits) to the flat frames list." );
    FlatFrames_Add_Button.OnClick( (Button::click_event_handler)&NukeXInterface::e_FlatAdd, w );
@@ -214,9 +214,9 @@ NukeXInterface::GUIData::GUIData( NukeXInterface& w )
    // ── Options Section ──
    const char* kPrimaryStretchTip =
       "Curve applied to the stacked image to produce NukeX_stretched.\n\n"
-      "Auto — picks a Phase-5 champion curve based on the first light "
+      "Auto -- picks a Phase-5 champion curve based on the first light "
       "frame's FITS metadata (FILTER / BAYERPAT / NAXIS3). Recommended.\n\n"
-      "VeraLux / GHS / MTF / ArcSinh / Log / Lupton / CLAHE — force a "
+      "VeraLux / GHS / MTF / ArcSinh / Log / Lupton / CLAHE -- force a "
       "specific curve regardless of filter class.\n\n"
       "The Process Console logs the Auto classification and choice so "
       "you can see exactly why a given curve was picked.";
@@ -240,7 +240,7 @@ NukeXInterface::GUIData::GUIData( NukeXInterface& w )
 
    const char* kFinishingStretchTip =
       "Optional second-stage stretch applied after the Primary curve.\n\n"
-      "None — only curve enrolled today. SAS / OTS / Photometric "
+      "None -- only curve enrolled today. SAS / OTS / Photometric "
       "finishers are slated for future phases.";
    FinishingStretch_Label.SetText( "Finishing Stretch:" );
    FinishingStretch_Label.SetTextAlignment( TextAlign::Right | TextAlign::VertCenter );
@@ -258,7 +258,7 @@ NukeXInterface::GUIData::GUIData( NukeXInterface& w )
       "Runs Phase B's per-voxel weight classification, robust statistics, "
       "and pixel-selection kernels on an OpenCL device "
       "(NVIDIA / AMD / Intel).  Distribution fitting (Ceres) stays on "
-      "CPU regardless.  Disable to run the whole stack on CPU — useful "
+      "CPU regardless.  Disable to run the whole stack on CPU -- useful "
       "for debugging or on machines without OpenCL.  Default: on." );
    EnableGPU_CheckBox.OnClick( (Button::click_event_handler)&NukeXInterface::e_OptionToggled, w );
 
@@ -308,7 +308,7 @@ NukeXInterface::GUIData::GUIData( NukeXInterface& w )
    QEOverride_Edit.SetText( w.instance.qeOverridePath );
    QEOverride_Edit.SetToolTip( kQEOverrideTip );
 
-   QEOverride_Browse_Button.SetText( "Browse\xE2\x80\xA6" );  // UTF-8 ellipsis
+   QEOverride_Browse_Button.SetText( "Browse..." );  // UTF-8 ellipsis
    QEOverride_Browse_Button.SetToolTip( "Select a QE override JSON file." );
    QEOverride_Browse_Button.OnClick(
       (Button::click_event_handler)&NukeXInterface::e_QEOverrideBrowse, w );
