@@ -166,15 +166,72 @@ std::vector<double> residuals_of(const ChannelTransform& t,
     return r;
 }
 
-/// Task 2: happy path only. Task 3 replaces this with the full ladder.
+/// The fallback ladder. Every rung is named in the returned Fit so the console
+/// can report which one a frame landed on.
+///
+///   enough stars       -> affine, sigma-clipped once
+///   fewer than that    -> translation only
+///   fewer still        -> identity
+///   implausible result -> identity
+///
+/// Rejection is always to identity, never to a partial correction. A wrong
+/// transform is worse than none: it moves every pixel of a channel.
 ChannelTransform fit_channel(const std::vector<Pair>& pairs,
                              const ChannelRegistrationConfig& config) {
-    ChannelTransform t;
-    if (static_cast<int>(pairs.size()) < config.min_stars_affine) return t;
-    t = fit_affine(pairs);
-    t.n_stars  = static_cast<int>(pairs.size());
-    t.residual = median_of(residuals_of(t, pairs));
-    return t;
+    ChannelTransform t;   // identity
+    const int n = static_cast<int>(pairs.size());
+
+    if (n < config.min_stars_translation) return t;
+
+    auto plausible = [&](const ChannelTransform& c) {
+        return std::abs(c.s - 1.0)  <= config.max_scale_deviation
+            && std::abs(c.tx)       <= config.max_translation_px
+            && std::abs(c.ty)       <= config.max_translation_px
+            && std::isfinite(c.s) && std::isfinite(c.tx) && std::isfinite(c.ty);
+    };
+
+    if (n >= config.min_stars_affine) {
+        ChannelTransform a = fit_affine(pairs);
+
+        // One sigma-clip pass. A second buys nothing measurable and risks
+        // eating real signal at the field edges, which is precisely where the
+        // correction is largest and least redundant.
+        std::vector<double> r = residuals_of(a, pairs);
+        const double med = median_of(r);
+        std::vector<double> dev;
+        dev.reserve(r.size());
+        for (double v : r) dev.push_back(std::abs(v - med));
+        // 1.4826 * MAD estimates sigma for a normal distribution.
+        const double sigma = 1.4826 * median_of(dev);
+
+        if (sigma > 0.0) {
+            const double cut = med + config.clip_sigma * sigma;
+            std::vector<Pair> kept;
+            kept.reserve(pairs.size());
+            for (size_t i = 0; i < pairs.size(); i++)
+                if (r[i] <= cut) kept.push_back(pairs[i]);
+
+            if (static_cast<int>(kept.size()) >= config.min_stars_affine
+                && kept.size() < pairs.size()) {
+                a = fit_affine(kept);
+                a.n_stars  = static_cast<int>(kept.size());
+                a.residual = median_of(residuals_of(a, kept));
+                return plausible(a) ? a : ChannelTransform{};
+            }
+        }
+
+        a.n_stars  = n;
+        a.residual = med;
+        if (plausible(a)) return a;
+        // An implausible affine fit does not earn a translation-only retry:
+        // the same bad centroids feed it. Fall through to identity.
+        return ChannelTransform{};
+    }
+
+    ChannelTransform tr = fit_translation(pairs);
+    tr.n_stars  = n;
+    tr.residual = median_of(residuals_of(tr, pairs));
+    return plausible(tr) ? tr : ChannelTransform{};
 }
 
 } // namespace
