@@ -7,12 +7,17 @@ Cube::Cube(int w, int h, const ChannelConfig& config)
     , height(h)
     , channel_config(config)
     , n_frames_loaded(0)
-    , voxels_(static_cast<size_t>(w) * static_cast<size_t>(h))
+    , stride_(voxel_record_size(config.n_channels))
+    // Default-init, not value-init: the bytes are about to be constructed over
+    // and zeroing them first would be a second full pass over what can be tens
+    // of gigabytes. std::make_unique would value-initialize, so `new` is used
+    // directly here.
+    , storage_(new std::byte[stride_ * static_cast<std::size_t>(w)
+                                     * static_cast<std::size_t>(h)])
 {
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            voxels_[y * width + x].n_channels = config.n_channels;
-        }
+    const std::size_t n = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    for (std::size_t i = 0; i < n; i++) {
+        construct_voxel(storage_.get() + i * stride_, config.n_channels);
     }
 }
 

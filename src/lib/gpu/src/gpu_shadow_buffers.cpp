@@ -67,9 +67,9 @@ void ShadowBuffers::extract_from_cube(
         n_frames[vi] = voxel.n_frames;
 
         for (int ch = 0; ch < C; ch++) {
-            welford_mean[ch * B + vi] = voxel.welford[ch].mean;
-            welford_M2[ch * B + vi]   = voxel.welford[ch].M2;
-            welford_n[ch * B + vi]    = voxel.welford[ch].n;
+            welford_mean[ch * B + vi] = voxel.channel(ch).welford.mean;
+            welford_M2[ch * B + vi]   = voxel.channel(ch).welford.M2;
+            welford_n[ch * B + vi]    = voxel.channel(ch).welford.n;
 
             // Route per-frame pixel values through the slot ref.
             // ref.cache == nullptr means no per-frame source for this slot
@@ -130,9 +130,9 @@ void ShadowBuffers::writeback_classification(
         voxel.total_exposure    = total_exposure_out[vi];
 
         for (int ch = 0; ch < C; ch++) {
-            voxel.mad[ch]                  = mad_out[ch * B + vi];
-            voxel.biweight_midvariance[ch] = biweight_midvar_out[ch * B + vi];
-            voxel.iqr[ch]                  = iqr_out[ch * B + vi];
+            voxel.channel(ch).mad                  = mad_out[ch * B + vi];
+            voxel.channel(ch).biweight_midvariance = biweight_midvar_out[ch * B + vi];
+            voxel.channel(ch).iqr                  = iqr_out[ch * B + vi];
         }
     }
 }
@@ -151,9 +151,9 @@ void ShadowBuffers::extract_distributions(
         const auto& voxel = cube.at(px, py);
 
         for (int ch = 0; ch < C; ch++) {
-            dist_true_signal[ch * B + vi] = voxel.distribution[ch].true_signal_estimate;
-            dist_uncertainty[ch * B + vi] = voxel.distribution[ch].signal_uncertainty;
-            dist_confidence[ch * B + vi]  = voxel.distribution[ch].confidence;
+            dist_true_signal[ch * B + vi] = voxel.channel(ch).distribution.true_signal_estimate;
+            dist_uncertainty[ch * B + vi] = voxel.channel(ch).distribution.signal_uncertainty;
+            dist_confidence[ch * B + vi]  = voxel.channel(ch).distribution.confidence;
         }
     }
 }
@@ -178,7 +178,7 @@ void ShadowBuffers::writeback_selection(
             float noise = noise_sigma[ch * B + vi];
             float snr = snr_out[ch * B + vi];
 
-            voxel.snr[ch] = snr;
+            voxel.channel(ch).snr = snr;
 
             // Write to output images (channel-by-channel, row-major)
             if (output_image)
