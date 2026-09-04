@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xri version="1.0">
+   <description>
+      <title>NukeX — Distribution-Fitted Stacking with Calibrated Colour Science</title>
+      <copyright>Copyright (c) 2026 Scott Carter</copyright>
+   </description>
+   <platform os="linux" arch="x64" version="1.8.0:1.9.9">
+      <package fileName="20260904-linux-x64-NukeX.tar.gz" sha1="9b669ffe70fe3294202b1973c7bfc03b076c9e89" type="module" releaseDate="20260904">
+         <title>NukeX</title>
+         <description>NukeX v5.0.0.0 - colour-science overhaul. Filter taxonomy from FITS FILTER/BAYERPAT/INSTRUME; quantum-efficiency database (55 cameras, 96 filters) driving a Q-matrix decomposition of dual-narrowband OSC stacks into Ha/OIII/SII; Lab/LCH ColorComposer with a calibrated emission-line palette, delivered in a NEW NukeX_composed window (on dual-narrowband data the stacked and stretched windows are unchanged from v4); OSC-as-LRGB luminance synthesis; QE override file picker; signed runtime updates for the camera database. The voxel record is now sized to the stack&apos;s real channel count, cutting a 24 MP OSC stack from 35.2 GB to 11.5 GB, and the alignment reference is checked before use. A batch may carry only one mono filter; stack L/R/G/B separately. Rating DB migrates in place. Package now ships share/qe_database.json beside bin/.</description>
+      </package>
+   </platform>
+</xri>
+<Signature developerId="scarter4work" timestamp="2026-09-04T15:31:06.788Z" encoding="Base64">AA9mgevrbsZ5pSpRxycoStO6+losrmvz5J2+bOhKkTly/rxWe1Mb+ZYkiQdFTPHrYph73MJIWb9QCyQB1lw8Dg==</Signature>
