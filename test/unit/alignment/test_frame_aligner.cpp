@@ -114,3 +114,53 @@ TEST_CASE("FrameAligner: reset clears reference", "[aligner]") {
     aligner.reset();
     REQUIRE(aligner.has_reference() == false);
 }
+
+// ── Explicit reference selection ─────────────────────────────────────
+
+TEST_CASE("FrameAligner: an explicitly set reference wins over the first frame aligned",
+          "[aligner]") {
+    // Directory order used to decide the reference. The engine now measures
+    // every frame first and hands the aligner the one it picked, so the frame
+    // that arrives first at align() must NOT capture the reference.
+    std::vector<std::tuple<float,float,float>> stars = {
+        {50, 50, 0.8f}, {150, 50, 0.7f}, {100, 100, 0.9f},
+        {50, 150, 0.6f}, {150, 150, 0.75f}, {80, 80, 0.65f},
+        {120, 120, 0.55f}, {30, 100, 0.5f}, {170, 100, 0.45f}
+    };
+    Image chosen = create_star_field(200, 200, stars);
+
+    FrameAligner::Config config;
+    config.star_config.snr_multiplier = 3.0f;
+    config.match_config.max_distance = 10.0f;
+    FrameAligner aligner(config);
+
+    aligner.set_reference(chosen, /*frame_index*/ 7);
+    REQUIRE(aligner.has_reference() == true);
+
+    // Frame 0 arrives first but must be matched against the reference, not
+    // installed as one.
+    auto first_seen = aligner.align(chosen, 0);
+    REQUIRE(first_seen.alignment.alignment_failed == false);
+
+    // The chosen frame still resolves to the identity when it comes round.
+    auto ref_frame = aligner.align(chosen, 7);
+    REQUIRE(ref_frame.alignment.H.is_identity() == true);
+    REQUIRE(ref_frame.alignment.alignment_failed == false);
+}
+
+TEST_CASE("FrameAligner: reset clears an explicitly set reference", "[aligner]") {
+    std::vector<std::tuple<float,float,float>> stars = {
+        {50, 50, 0.8f}, {150, 50, 0.7f}, {100, 100, 0.9f},
+        {50, 150, 0.6f}, {150, 150, 0.75f}, {80, 80, 0.65f}
+    };
+    Image frame = create_star_field(200, 200, stars);
+    FrameAligner aligner;
+    aligner.set_reference(frame, 3);
+    aligner.reset();
+    REQUIRE(aligner.has_reference() == false);
+
+    // With no reference, the next frame to arrive becomes it again.
+    auto r = aligner.align(frame, 5);
+    REQUIRE(aligner.has_reference() == true);
+    REQUIRE(r.alignment.H.is_identity() == true);
+}

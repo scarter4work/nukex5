@@ -38,6 +38,12 @@ public:
 
     int total_pixels() const { return width * height; }
 
+    /// Channels every voxel was allocated with. channel_config may be
+    /// re-merged during Phase A; it must never exceed this, because the
+    /// per-voxel records are sized against it and a larger slot index writes
+    /// past the allocation.
+    int allocated_channels() const { return allocated_channels_; }
+
     /// Bytes one voxel occupies, including its trailing channel records.
     std::size_t voxel_stride() const { return stride_; }
 
@@ -58,6 +64,7 @@ private:
                 + static_cast<std::size_t>(x)) * stride_;
     }
 
+    int                             allocated_channels_ = 0;
     std::size_t                     stride_ = 0;
     std::unique_ptr<std::byte[]>    storage_;
 };
