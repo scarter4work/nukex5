@@ -61,6 +61,19 @@ bool verify_body(const std::string& body, const std::string& signature_b64,
 
 } // namespace
 
+// Ed25519 public key for NukeX camera-database publications. Rotating this
+// requires shipping a new module build, which is the point: the key is the
+// root of trust and must not itself be updatable over the network.
+const unsigned char* qe_signing_public_key() {
+    static const unsigned char kQEPublicKey[kEd25519PublicKeyBytes] = {
+        0xde, 0x00, 0x3c, 0xe9, 0x28, 0x24, 0xc4, 0x7f,
+        0xd8, 0x2d, 0x12, 0xa1, 0x7f, 0x5a, 0xd4, 0x11,
+        0x2a, 0x0a, 0xc3, 0x76, 0x03, 0x4c, 0xcc, 0x9b,
+        0xb4, 0x77, 0x8f, 0x0a, 0x51, 0xa5, 0x10, 0xcc
+    };
+    return kQEPublicKey;
+}
+
 const char* to_string(UpdateOutcome o) {
     switch (o) {
         case UpdateOutcome::UP_TO_DATE:         return "up to date";
