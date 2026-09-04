@@ -9,6 +9,8 @@
 #include "NukeXProgress.h"
 #include "RatingDialog.h"
 #include "nukex/io/filter_classifier.hpp"
+#include "nukex/calibration/qe_update_state.hpp"
+#include <filesystem>
 #include <pcl/ImageWindow.h>
 #include <pcl/View.h>
 #include <pcl/FITSHeaderKeyword.h>
@@ -119,6 +121,53 @@ static std::string PIShareRoot()
    const std::string base =
        pcl::PixInsightSettings::GlobalString( "Application/BaseDirectory" ).ToUTF8().c_str();
    return base + "/share";
+}
+
+// <user-data>/nukex4 -- the same 0700 directory resolve_user_data_paths()
+// creates for the Phase 8 state. A downloaded database lands here because
+// <PI>/share is root-owned in a normal install and a user must not need
+// write access there to receive a camera-database update.
+static std::string QEUserDataRoot()
+{
+   const char* home = std::getenv( "HOME" );
+   return ( home ? std::string( home ) + "/.config" : std::string( "/tmp" ) )
+          + "/nukex4";
+}
+
+static std::string QEUpdateStatePath()
+{
+   return QEUserDataRoot() + "/qe_update_state.json";
+}
+
+// Precedence: a downloaded database beats the shipped one. The shipped copy
+// is never modified or removed, so deleting a single file always restores
+// the as-installed behaviour. The user's qe_overrides.json still layers on
+// top of whichever wins here -- the engine applies that separately.
+static bool UsingDownloadedQEDatabase()
+{
+   std::error_code ec;
+   const bool present = std::filesystem::exists(
+       QEUserDataRoot() + "/qe_database.json", ec );
+   return present && !ec;
+}
+
+static std::string ResolveQEDatabasePath()
+{
+   if ( UsingDownloadedQEDatabase() )
+      return QEUserDataRoot() + "/qe_database.json";
+   return PIShareRoot() + "/qe_database.json";
+}
+
+// The version of the database actually loaded, which is not the same thing
+// as the version last installed: delete the downloaded file and the shipped
+// one takes over. A provenance keyword that names a version we did not use
+// is worse than none at all, since explaining a changed result is its only
+// job. 0 means "the database that shipped with this module".
+static int ActiveQEDatabaseVersion()
+{
+   if ( !UsingDownloadedQEDatabase() )
+      return 0;
+   return nukex::load_update_state( QEUpdateStatePath() ).installed_db_version;
 }
 
 } // anonymous namespace
@@ -441,7 +490,7 @@ bool NukeXInstance::ExecuteGlobal()
    config.cache_dir = cacheDirectory.ToUTF8().c_str();
    config.gpu_config.force_cpu_fallback = !enableGPU;
    config.qe_override_path = qeOverridePath.ToUTF8().c_str();
-   config.qe_database_path = PIShareRoot() + "/qe_database.json";
+   config.qe_database_path = ResolveQEDatabasePath();
    // Shipped QE database lives beside the module install: <base>/share/qe_database.json.
 
    // Execute pipeline with progress reporting
@@ -647,6 +696,13 @@ bool NukeXInstance::ExecuteGlobal()
           "NUKEX_QE_CONFIDENCE",
           result.qe_generic_camera_fallback ? "generic-fallback" : "database",
           "QE source for Phase B: camera entry or generic Sony OSC fallback" ) );
+      // A camera database that can update itself would otherwise make a
+      // changed result unexplainable: same frames, different pixels, no
+      // record of why. This keyword is that record.
+      cw_ka.Append( pcl::FITSHeaderKeyword(
+          "NUKEX_QE_DB_VERSION",
+          pcl::IsoString().Format( "%d", ActiveQEDatabaseVersion() ),
+          "QE camera database version used for the Phase B solve" ) );
       cw.SetKeywords( cw_ka );
 
       cw.Show();
