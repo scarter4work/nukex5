@@ -49,6 +49,7 @@ nukex_add_test(test_star_detector unit/alignment/test_star_detector.cpp nukex4_a
 nukex_add_test(test_homography     unit/alignment/test_homography.cpp     nukex4_alignment)
 nukex_add_test(test_frame_aligner unit/alignment/test_frame_aligner.cpp nukex4_alignment)
 nukex_add_test(test_alignment_diag unit/alignment/test_alignment_diag.cpp nukex4_alignment)
+nukex_add_test(test_reference_selector unit/alignment/test_reference_selector.cpp nukex4_alignment)
 nukex_add_test(test_qe_database   unit/calibration/test_qe_database.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_channel_decomposer unit/calibration/test_channel_decomposer.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_ed25519_verify unit/calibration/test_ed25519_verify.cpp nukex4_calibration nukex4_io nukex4_core)

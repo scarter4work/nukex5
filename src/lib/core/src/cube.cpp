@@ -7,6 +7,7 @@ Cube::Cube(int w, int h, const ChannelConfig& config)
     , height(h)
     , channel_config(config)
     , n_frames_loaded(0)
+    , allocated_channels_(config.n_channels)
     , stride_(voxel_record_size(config.n_channels))
     // Default-init, not value-init: the bytes are about to be constructed over
     // and zeroing them first would be a second full pass over what can be tens

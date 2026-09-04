@@ -15,6 +15,7 @@
 // member and this include can move into the header.
 #include "nukex/io/filter_classifier.hpp"
 #include "nukex/alignment/frame_aligner.hpp"
+#include "nukex/alignment/reference_selector.hpp"
 // TASK-14-COLLAPSE: same — pImpl-only include, can move to the
 // header once the namespace collision is gone.
 #include "nukex/calibration/qe_database.hpp"
@@ -219,13 +220,128 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // Bilinear debayer produces same-size output.
     int out_width = raw_width;
     int out_height = raw_height;
-    int n_ch = ch_config.n_channels;
+    int n_ch = ch_config.n_channels;   // finalised by the measurement pass below
+
+    const int n_frames = static_cast<int>(light_paths.size());
 
     // Build master flat if flats provided
     Image master_flat;
     if (!flat_paths.empty()) {
         master_flat = FlatCalibration::build_master_flat(flat_paths);
     }
+
+    // Load a frame and put it through the same calibration the Phase A loop
+    // applies, so measurements taken here describe the pixels that will
+    // actually be aligned.
+    auto load_calibrated = [&](int f, Image& out) -> bool {
+        auto rr = FITSReader::read(light_paths[f]);
+        if (!rr.success) return false;
+        out = std::move(rr.image);
+        if (bayer != BayerPattern::NONE) {
+            out = DebayerEngine::debayer(out, bayer);
+        }
+        if (!master_flat.empty()) {
+            FlatCalibration::apply(out, master_flat);
+        }
+        return true;
+    };
+
+    // ═══ Measurement pass ════════════════════════════════════════════
+    //
+    // One read of every frame before the cube exists, answering two
+    // questions that Phase A cannot answer while it streams.
+    //
+    // 1. Which slots does this batch need? ChannelConfig::merge() unions the
+    //    slot names, so a batch whose later frames carry filters the first
+    //    frame did not needs MORE channels than the first frame implies. The
+    //    cube used to be allocated from the first frame alone and the config
+    //    grown underneath it; that was survivable only because every voxel
+    //    carried MAX_CHANNELS worth of per-channel arrays and the extra slots
+    //    landed in space nobody was using. Now that a voxel is sized to its
+    //    real channel count, the same growth writes off the end of the
+    //    allocation. A mono L frame followed by a Bayer HaO3 frame is enough
+    //    to do it: one channel allocated, four routed. So the union is
+    //    settled here, before a single byte is allocated.
+    //
+    // 2. Which frame should be the alignment reference? It used to be
+    //    whichever frame the directory listing put first. On an LRGB-mono set
+    //    the per-filter star yield varies enormously, so that was a coin
+    //    flip: on M27 2025 it landed on a blue frame with 32 stars, the Groth
+    //    matcher could not find a consistent triangle against the 200-star
+    //    frames that followed, and 71 of 72 frames aligned with zero inliers.
+    //    Those frames are not merely dropped -- they are stacked unwarped at
+    //    half weight, so a bad reference corrupts the result rather than just
+    //    shrinking it.
+    //
+    // Cost is one extra read plus one star detection per frame, a few percent
+    // of Phase A on these corpora.
+    int ref_index = 0;
+    std::vector<FrameQuality> frame_quality(n_frames);
+    {
+        obs.begin_phase("Measuring frames", n_frames);
+        for (int f = 0; f < n_frames; f++) {
+            auto rr = FITSReader::read(light_paths[f]);
+            if (!rr.success) {
+                frame_quality[f].usable = false;
+                obs.advance(1, "  frame " + std::to_string(f + 1) + ": read failed");
+                continue;
+            }
+
+            // Mirror the main loop's per-frame accept/reject exactly, so the
+            // slot union here is the one Phase A will actually route into.
+            Filter ff = filter_classifier_->classify(rr.metadata);
+            bool f_is_bayer =
+                parse_bayer_pattern(rr.metadata.bayer_pattern) != BayerPattern::NONE;
+            if (ff.cls == FilterClass::UNKNOWN && f_is_bayer) {
+                frame_quality[f].usable = false;
+                obs.advance(1, "  frame " + std::to_string(f + 1)
+                               + ": unknown FILTER on Bayer -- will be skipped");
+                continue;
+            }
+            ch_config = ChannelConfig::merge(ch_config, ChannelConfig::from_filter(ff));
+
+            Image img = std::move(rr.image);
+            if (bayer != BayerPattern::NONE) {
+                img = DebayerEngine::debayer(img, bayer);
+            }
+            if (!master_flat.empty()) {
+                FlatCalibration::apply(img, master_flat);
+            }
+
+            float sat = StarDetector::saturation_fraction(
+                img, config_.aligner_config.star_config.saturation_level);
+            if (sat >= config_.aligner_config.star_config.saturation_reject_fraction) {
+                frame_quality[f].usable = false;
+                obs.advance(1, "  frame " + std::to_string(f + 1) + ": blown out");
+                continue;
+            }
+
+            StarCatalog cat =
+                StarDetector::detect(img, config_.aligner_config.star_config);
+            frame_quality[f].star_count  = static_cast<int>(cat.stars.size());
+            frame_quality[f].median_fwhm = compute_median_fwhm(cat);
+
+            char detail[96];
+            std::snprintf(detail, sizeof(detail),
+                          "  frame %d: %d stars, FWHM %.2f px",
+                          f + 1, frame_quality[f].star_count,
+                          frame_quality[f].median_fwhm);
+            obs.advance(1, detail);
+
+            if (obs.is_cancelled()) {
+                obs.message("Cancelled while measuring frames.");
+                obs.end_phase();
+                return result;
+            }
+        }
+        obs.end_phase();
+
+        int chosen = select_reference_frame(frame_quality);
+        ref_index = (chosen >= 0) ? chosen : 0;
+    }
+
+    // The slot union is now final; everything downstream sizes against it.
+    n_ch = ch_config.n_channels;
 
     // Allocate cube
     Cube cube(out_width, out_height, ch_config);
@@ -256,7 +372,6 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // the cache matching its post-debayer geometry. Phase B reads through
     // slot_cache_refs (built below after Phase A) instead of indexing the
     // cache directly by cube slot index.
-    int n_frames = static_cast<int>(light_paths.size());
     std::map<CacheSig, FrameCache> caches;
     auto get_or_create_cache = [&](int w, int h, int n_ch) -> FrameCache& {
         CacheSig sig{w, h, n_ch};
@@ -285,8 +400,30 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     std::vector<FrameStats> frame_stats(n_frames);
     std::vector<float> frame_fwhms(n_frames, 0.0f);
 
-    // Initialize aligner
+    // Initialize aligner, seeded with the reference the measurement pass chose.
     FrameAligner aligner(config_.aligner_config);
+    if (n_frames > 1) {
+        Image ref_image;
+        if (load_calibrated(ref_index, ref_image)) {
+            aligner.set_reference(ref_image, ref_index);
+            std::string ref_name = light_paths[ref_index];
+            auto slash = ref_name.rfind('/');
+            if (slash != std::string::npos) ref_name = ref_name.substr(slash + 1);
+            char msg[256];
+            std::snprintf(msg, sizeof(msg),
+                          "Alignment reference: frame %d/%d (%s) -- %d stars, FWHM %.2f px",
+                          ref_index + 1, n_frames, ref_name.c_str(),
+                          frame_quality[ref_index].star_count,
+                          frame_quality[ref_index].median_fwhm);
+            obs.message(msg);
+        } else {
+            // Could not re-read the frame we picked. Leave the aligner without
+            // a reference so it falls back to the first frame to arrive, and
+            // say so rather than failing silently.
+            obs.message("Could not re-read the chosen alignment reference; "
+                        "falling back to the first frame.");
+        }
+    }
 
     // ═══ PHASE A — Streaming Accumulation ════════════════════════════
 
@@ -375,9 +512,24 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         }
 
         // Merge per-frame config into the cube's running channel_config.
-        // Idempotent if the per-frame filter matches the running config.
+        // The measurement pass already unioned every frame's slots, so this
+        // is idempotent -- and it must be. A voxel holds exactly
+        // allocated_channels() channel records, so a slot index beyond that
+        // writes into the next voxel, and past the end of the last one it
+        // corrupts the heap. Before the voxel was sized to its real channel
+        // count the same growth was absorbed by MAX_CHANNELS of unused
+        // provisioning and nobody noticed. Fail loudly instead.
         ChannelConfig per_frame_cfg = ChannelConfig::from_filter(frame_filter);
-        cube.channel_config = ChannelConfig::merge(cube.channel_config, per_frame_cfg);
+        ChannelConfig merged = ChannelConfig::merge(cube.channel_config, per_frame_cfg);
+        if (merged.n_channels > cube.allocated_channels()) {
+            obs.message("Internal error: frame " + std::to_string(f + 1)
+                        + " needs slot " + std::to_string(merged.n_channels)
+                        + " but the cube was allocated for "
+                        + std::to_string(cube.allocated_channels())
+                        + " channels. The measurement pass missed this frame's filter.");
+            std::abort();
+        }
+        cube.channel_config = merged;
 
         // 2. Debayer
         if (bayer != BayerPattern::NONE) {

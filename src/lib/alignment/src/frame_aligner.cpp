@@ -12,12 +12,14 @@ FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_ind
     result.stars = StarDetector::detect(frame, config_.star_config);
 
     if (!has_ref_) {
-        // First frame: becomes the reference
-        ref_catalog_ = result.stars;
-        ref_width_ = frame.width();
-        ref_height_ = frame.height();
-        has_ref_ = true;
+        // No reference was set: fall back to the first frame to arrive.
+        adopt_reference(frame, result.stars, frame_index);
+    }
 
+    if (frame_index == ref_index_) {
+        // This IS the reference. Matching it against its own catalog would
+        // only reintroduce fit noise into a transform that is exactly the
+        // identity by construction.
         result.image = frame.clone();
         result.alignment.H = HomographyMatrix::identity();
         result.alignment.match.success = true;
@@ -51,11 +53,26 @@ FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_ind
     return result;
 }
 
+void FrameAligner::set_reference(const Image& frame, int frame_index) {
+    adopt_reference(frame, StarDetector::detect(frame, config_.star_config),
+                    frame_index);
+}
+
+void FrameAligner::adopt_reference(const Image& frame, const StarCatalog& stars,
+                                   int frame_index) {
+    ref_catalog_ = stars;
+    ref_width_   = frame.width();
+    ref_height_  = frame.height();
+    ref_index_   = frame_index;
+    has_ref_     = true;
+}
+
 void FrameAligner::reset() {
     ref_catalog_ = StarCatalog{};
     has_ref_ = false;
     ref_width_ = 0;
     ref_height_ = 0;
+    ref_index_ = -1;
 }
 
 } // namespace nukex

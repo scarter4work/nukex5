@@ -30,7 +30,7 @@ using namespace nukex;
 namespace fs = std::filesystem;
 
 TEST_CASE("Phase B Q-solve: synthetic HaO3 frame recovers Ha + OIII slots",
-          "[.integration][phase_b]") {
+          "[integration][phase_b]") {
     // write_synthetic_q_solved_hao3 creates a 16×16 Bayer frame with FILTER=HaO3
     // and pixel values engineered so the Q-solve recovers Ha≈0.5 and OIII≈0.3
     // at the centre pixel (8,8).
@@ -60,7 +60,7 @@ TEST_CASE("Phase B Q-solve: synthetic HaO3 frame recovers Ha + OIII slots",
 }
 
 TEST_CASE("Phase B Q-solve: pure broadband-OSC produces no Ha/OIII/SII slot",
-          "[.integration][phase_b]") {
+          "[integration][phase_b]") {
     // Plain OSC frame (no FILTER keyword) — all slots route through as
     // broadband passthrough; no dual-NB groups → no Q-solve.
     auto tmp = fs::temp_directory_path() / "phase_b_osc.fits";
@@ -85,7 +85,7 @@ TEST_CASE("Phase B Q-solve: pure broadband-OSC produces no Ha/OIII/SII slot",
 }
 
 TEST_CASE("Phase B Q-solve: HaO3 + S2O3 mixed → multi-source OIII merge",
-          "[.integration][phase_b]") {
+          "[integration][phase_b]") {
     // Two batches: 10 HaO3 frames + 5 S2O3 frames. Both contribute OIII.
     // The weighted-mean merge gives the 10-frame HaO3 batch twice the weight
     // of the 5-frame S2O3 batch for the OIII slot.
@@ -113,7 +113,7 @@ TEST_CASE("Phase B Q-solve: HaO3 + S2O3 mixed → multi-source OIII merge",
 }
 
 TEST_CASE("Phase B Q-solve: negative emission clamped, counter incremented",
-          "[.integration][phase_b]") {
+          "[integration][phase_b]") {
     // No dedicated negative-emission writer exists (or is needed): a negative
     // OIII target fed to write_synthetic_q_solved_hao3 engineers the negative
     // Q-solve result directly through the existing writer.
@@ -138,7 +138,7 @@ TEST_CASE("Phase B Q-solve: negative emission clamped, counter incremented",
 }
 
 TEST_CASE("Phase B Q-solve: unknown INSTRUME falls back to generic_sony_imx_osc with a warning",
-          "[.integration][phase_b]") {
+          "[integration][phase_b]") {
     // Photosites are engineered from ASI585MC's Q; the fixture's generic
     // camera is a copy of ASI585MC, so the fallback recovers the same lines.
     auto tmp = fs::temp_directory_path() / "phase_b_generic.fits";
