@@ -24,14 +24,22 @@ constexpr float kReferenceCandidateBand = 0.75f;
 /// matcher could not find a consistent triangle against the 200-star frames
 /// that followed, and 71 of 72 frames aligned with zero inliers.
 ///
-/// Selection is by measured quality instead. Every usable frame within
-/// kReferenceCandidateBand of the best star count is a candidate, and the
-/// sharpest candidate wins; detection caps at max_stars, so most frames of a
-/// good night tie on count and FWHM is what actually separates them. Ties
-/// resolve to the lowest index, because the E2E goldens require the choice to
-/// be reproducible.
+/// The rule is minimal intervention. The frame the aligner would have adopted
+/// anyway -- the first usable one -- is kept whenever it is a viable
+/// candidate, meaning it reaches kReferenceCandidateBand of the best star
+/// count in the batch. Only when it does not is it replaced, and then by the
+/// sharpest candidate; detection caps at max_stars, so candidates usually tie
+/// on count and FWHM is what separates them. Ties resolve to the lowest index,
+/// because the E2E goldens require the choice to be reproducible.
 ///
-/// Returns -1 for an empty list, and 0 when no frame is usable — degrading to
+/// It deliberately does NOT always take the best frame. Measured 2026-09-04 on
+/// NGC7635, where all 65 frames detect exactly 200 stars and the first frame's
+/// FWHM ranks 18th of 65: moving the reference to the sharpest frame, better
+/// by 0.2 px, took that corpus from 65 of 65 frames aligned to 59 of 65. Among
+/// viable candidates the choice is arbitrary, and changing it costs
+/// alignments and moves every existing user's output for no gain.
+///
+/// Returns -1 for an empty list, and 0 when no frame is usable -- degrading to
 /// the historical first-frame behaviour rather than failing the stack.
 int select_reference_frame(const std::vector<FrameQuality>& frames);
 

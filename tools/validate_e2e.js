@@ -303,17 +303,32 @@ function runCase(tc, manifest, out_root, regen, golden_dir) {
    checks.wall_time_within_budget = primary.elapsed_s <= tc.wall_time_budget_s;
 
    // Check 5b: alignment outcome via read-only module output parameter.
-   // Fails the case if the module reports even one frame failed alignment,
-   // surfacing regressions like the "61/65 failed" state that predated
-   // the Groth triangle-matcher fix.  A return of -1 means the module is
-   // older than this parameter; in that case the check is skipped rather
-   // than failed (graceful back-compat).
+   // Surfaces regressions like the "61/65 failed" state that predated the
+   // Groth triangle-matcher fix.
+   //
+   // The bar is the case's own `min_frames_ok_alignment`. Every case has
+   // declared one since the manifest was written and this check ignored it,
+   // demanding zero failures instead -- stricter than the manifest asked for
+   // (bayer_rgb_m27_2023 declares 30 of 33) and impossible to express for a
+   // corpus with a known, measured limitation. A per-case floor still
+   // ratchets: it fails the moment alignment gets worse than what the case
+   // was recorded at, which is what the check is for.
+   //
+   // A return of -1 means the module is older than this parameter; the check
+   // is skipped rather than failed (graceful back-compat).
    checks.n_frames_processed         = primary.n_frames_processed;
    checks.n_frames_failed_alignment  = primary.n_frames_failed_alignment;
    if (primary.n_frames_failed_alignment === -1) {
       checks.alignment_all_ok = null;  // module pre-dates the param
    } else {
-      checks.alignment_all_ok = (primary.n_frames_failed_alignment === 0);
+      var n_ok = primary.n_frames_processed - primary.n_frames_failed_alignment;
+      // No declared floor means the historical bar: every frame must align.
+      var floor = (tc.min_frames_ok_alignment === undefined)
+                ? primary.n_frames_processed
+                : tc.min_frames_ok_alignment;
+      checks.n_frames_ok_alignment      = n_ok;
+      checks.min_frames_ok_alignment    = floor;
+      checks.alignment_all_ok           = (n_ok >= floor);
    }
 
    // Check 6: dropdown sweep

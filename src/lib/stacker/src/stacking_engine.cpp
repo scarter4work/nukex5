@@ -343,6 +343,40 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // The slot union is now final; everything downstream sizes against it.
     n_ch = ch_config.n_channels;
 
+    // Guard: more than one slot fed by un-debayered (single-channel) frames.
+    //
+    // FrameCache is keyed on post-debayer geometry, so every mono frame in a
+    // batch lands in the same (W, H, 1) cache regardless of its filter. Phase B
+    // then has no way to read a given slot's own frames: one slot reads that
+    // cache and fits a mixture of every filter's samples, and the rest are
+    // routed to no cache at all and fit a buffer of zeros. On M27 2025
+    // (L24 R12 G12 B24) that produced one populated channel out of four and
+    // three exactly-zero ones -- an image that looked like a colour-balance
+    // problem and was not.
+    //
+    // Phase A routes correctly; the per-slot Welford accumulators are right.
+    // The gap is that Phase B's read path, shadow buffers and weight kernels
+    // all assume every channel shares one frame set. Separating them is an
+    // architectural change, not a cache key, so until it lands this refuses to
+    // run rather than emitting channels that are silently empty.
+    if (bayer == BayerPattern::NONE && n_ch > 1) {
+        std::string slots;
+        for (int i = 0; i < n_ch; i++) {
+            if (i) slots += ", ";
+            slots += ch_config.slot_name(i);
+        }
+        ExecuteResult err{};
+        err.ok    = false;
+        err.error = "This batch carries " + std::to_string(n_ch) +
+                    " mono filters (" + slots + "). NukeX cannot yet keep their "
+                    "frames apart in Phase B -- every mono frame shares one "
+                    "frame cache, so only one filter's data would survive and "
+                    "the other channels would come out empty. Stack each mono "
+                    "filter separately for now and combine the results.";
+        obs.message(err.error);
+        return err;
+    }
+
     // Allocate cube
     Cube cube(out_width, out_height, ch_config);
     {
