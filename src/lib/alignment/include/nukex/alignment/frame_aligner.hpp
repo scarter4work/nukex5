@@ -4,6 +4,7 @@
 #include "nukex/alignment/star_detector.hpp"
 #include "nukex/alignment/star_matcher.hpp"
 #include "nukex/alignment/homography.hpp"
+#include "nukex/alignment/channel_registration.hpp"
 #include "nukex/io/image.hpp"
 
 namespace nukex {
@@ -23,6 +24,16 @@ public:
         StarDetector::Config star_config;
         StarMatcher::Config  match_config;
         HomographyComputer::Config homography_config;
+        ChannelRegistrationConfig channel_config;
+
+        /// Register the colour channels to each other within each frame.
+        ///
+        /// On by default and with no user-facing threshold, deliberately:
+        /// almost nobody knows they have lateral chromatic aberration, so an
+        /// opt-in would not reach the people it helps. The cost is bounded by
+        /// the near-identity skip -- a rig with no colour error pays nothing.
+        /// The flag exists so tests can isolate the old behaviour.
+        bool register_channels = true;
     };
 
     FrameAligner() = default;
@@ -31,12 +42,18 @@ public:
     /// Align a frame to the reference. Returns the aligned image and alignment result.
     /// If this is the first frame, it becomes the reference (H = identity).
     ///
-    /// The input image should be single-channel (luminance or raw Bayer).
-    /// For star detection, channel 0 is used.
+    /// The input image may be mono or colour. Star detection runs on the
+    /// green channel for a colour frame (see default_reference_channel()).
     struct AlignedFrame {
         Image image;              // warped image, aligned to reference
         AlignmentResult alignment;
         StarCatalog stars;        // detected stars (pre-alignment coordinates)
+
+        /// Per-channel transforms measured on this frame, before warping.
+        /// Empty for a mono frame, when registration is off, or when nothing
+        /// could be measured.
+        ChannelTransforms channels;
+
         int frame_index;
     };
 

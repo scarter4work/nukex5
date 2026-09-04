@@ -164,3 +164,148 @@ TEST_CASE("FrameAligner: reset clears an explicitly set reference", "[aligner]")
     REQUIRE(aligner.has_reference() == true);
     REQUIRE(r.alignment.H.is_identity() == true);
 }
+
+// --- per-channel registration through the aligner ------------------------
+
+#include "nukex/alignment/channel_registration.hpp"
+
+namespace {
+
+// A 3-channel frame with a star grid; red displaced by a pure translation.
+nukex::Image make_colour_frame(int w, int h, double red_dx, double red_dy,
+                               double jitter_x = 0.0, double jitter_y = 0.0) {
+    nukex::Image img(w, h, 3);
+    img.fill(0.002f);
+    auto blob = [&](int ch, double cx, double cy) {
+        for (int dy = -6; dy <= 6; dy++)
+            for (int dx = -6; dx <= 6; dx++) {
+                int px = int(std::lround(cx)) + dx;
+                int py = int(std::lround(cy)) + dy;
+                if (px < 0 || px >= w || py < 0 || py >= h) continue;
+                double ex = px - cx, ey = py - cy;
+                img.at(px, py, ch) += float(0.5 * std::exp(-(ex*ex + ey*ey) / 5.12));
+            }
+    };
+    for (int j = 0; j < 5; j++)
+        for (int i = 0; i < 5; i++) {
+            // Break the grid's exact periodicity. Triangle-similarity matching is
+            // degenerate on a lattice -- many triangles are congruent to a triangle
+            // in another cell, so the matcher pairs stars across cells and the
+            // homography fails on too few correct correspondences. Real star fields
+            // are never periodic. Deterministic, so the test does not depend on a
+            // seed.
+            const double ox = 9.0 * std::sin(2.7 * (i + 1) + 0.9 * (j + 1));
+            const double oy = 9.0 * std::cos(1.9 * (i + 1) + 1.3 * (j + 1));
+            double x = 50.0 + 0.37 + i * (w - 100.0) / 4.0 + ox + jitter_x;
+            double y = 50.0 + 0.61 + j * (h - 100.0) / 4.0 + oy + jitter_y;
+            blob(1, x, y);
+            blob(2, x, y);
+            blob(0, x + red_dx, y + red_dy);
+        }
+    return img;
+}
+
+double channel_offset_x(const nukex::Image& im, int ch_a, int ch_b,
+                        int x0, int x1, int y0, int y1) {
+    auto com = [&](int ch) {
+        double w = 0, wx = 0;
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++) {
+                double v = im.at(x, y, ch) - 0.002;
+                if (v <= 0) continue;
+                w += v; wx += v * x;
+            }
+        return wx / w;
+    };
+    return com(ch_a) - com(ch_b);
+}
+
+} // namespace
+
+TEST_CASE("FrameAligner registers channels on the reference frame itself",
+          "[frame_aligner]") {
+    // The reference frame is not warped for alignment -- H is identity by
+    // construction. Its channels still have to be put right, or every other
+    // frame inherits its colour error through the reference.
+    nukex::Image ref = make_colour_frame(400, 400, 1.2, 0.0);
+
+    nukex::FrameAligner aligner;
+    aligner.set_reference(ref, 0);
+    auto out = aligner.align(ref, 0);
+
+    REQUIRE_FALSE(out.channels.empty());
+    REQUIRE(out.channels.reference_channel == 1);
+
+    CHECK(std::abs(channel_offset_x(ref, 0, 1, 30, 90, 30, 90)) > 1.0);
+    CHECK(std::abs(channel_offset_x(out.image, 0, 1, 30, 90, 30, 90)) < 0.06);
+}
+
+TEST_CASE("FrameAligner registers channels on a warped frame",
+          "[frame_aligner]") {
+    nukex::Image ref   = make_colour_frame(400, 400, 1.2, 0.0);
+    nukex::Image moved = make_colour_frame(400, 400, 1.2, 0.0, 3.0, 2.0);
+
+    nukex::FrameAligner aligner;
+    aligner.set_reference(ref, 0);
+    (void)aligner.align(ref, 0);
+    auto out = aligner.align(moved, 1);
+
+    REQUIRE_FALSE(out.alignment.alignment_failed);
+    CHECK(std::abs(channel_offset_x(out.image, 0, 1, 30, 90, 30, 90)) < 0.06);
+}
+
+TEST_CASE("a mono frame produces no channel transforms and is untouched",
+          "[frame_aligner]") {
+    nukex::Image mono(300, 300, 1);
+    mono.fill(0.002f);
+    for (int j = 0; j < 4; j++)
+        for (int i = 0; i < 4; i++) {
+            double cx = 50.0 + 0.3 + i * 66.0, cy = 50.0 + 0.7 + j * 66.0;
+            for (int dy = -6; dy <= 6; dy++)
+                for (int dx = -6; dx <= 6; dx++) {
+                    int px = int(std::lround(cx)) + dx, py = int(std::lround(cy)) + dy;
+                    if (px < 0 || px >= 300 || py < 0 || py >= 300) continue;
+                    double ex = px - cx, ey = py - cy;
+                    mono.at(px, py, 0) += float(0.5 * std::exp(-(ex*ex+ey*ey)/5.12));
+                }
+        }
+
+    nukex::FrameAligner aligner;
+    aligner.set_reference(mono, 0);
+    auto out = aligner.align(mono, 0);
+
+    REQUIRE(out.channels.empty());
+    for (int y = 0; y < 300; y++)
+        for (int x = 0; x < 300; x++)
+            REQUIRE(out.image.at(x, y, 0) == mono.at(x, y, 0));
+}
+
+TEST_CASE("a frame whose channels already agree is not resampled for it",
+          "[frame_aligner]") {
+    // All three channels drawn at the same positions. The near-identity skip
+    // must take the plain path, leaving the reference frame bit-identical.
+    nukex::Image ref = make_colour_frame(400, 400, 0.0, 0.0);
+
+    nukex::FrameAligner aligner;
+    aligner.set_reference(ref, 0);
+    auto out = aligner.align(ref, 0);
+
+    for (int c = 0; c < 3; c++)
+        for (int y = 0; y < 400; y++)
+            for (int x = 0; x < 400; x++)
+                REQUIRE(out.image.at(x, y, c) == ref.at(x, y, c));
+}
+
+TEST_CASE("channel registration can be switched off",
+          "[frame_aligner]") {
+    nukex::Image ref = make_colour_frame(400, 400, 1.2, 0.0);
+
+    nukex::FrameAligner::Config cfg;
+    cfg.register_channels = false;
+    nukex::FrameAligner aligner(cfg);
+    aligner.set_reference(ref, 0);
+    auto out = aligner.align(ref, 0);
+
+    REQUIRE(out.channels.empty());
+    CHECK(std::abs(channel_offset_x(out.image, 0, 1, 30, 90, 30, 90)) > 1.0);
+}
