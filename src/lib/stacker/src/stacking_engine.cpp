@@ -277,6 +277,8 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // of Phase A on these corpora.
     int ref_index = 0;
     std::vector<FrameQuality> frame_quality(n_frames);
+    bool saw_bayer_frame = false;
+    bool saw_mono_frame  = false;
     {
         obs.begin_phase("Measuring frames", n_frames);
         for (int f = 0; f < n_frames; f++) {
@@ -299,6 +301,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                 continue;
             }
             ch_config = ChannelConfig::merge(ch_config, ChannelConfig::from_filter(ff));
+            (f_is_bayer ? saw_bayer_frame : saw_mono_frame) = true;
 
             Image img = std::move(rr.image);
             if (bayer != BayerPattern::NONE) {
@@ -359,6 +362,34 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // all assume every channel shares one frame set. Separating them is an
     // architectural change, not a cache key, so until it lands this refuses to
     // run rather than emitting channels that are silently empty.
+    // Guard: a batch that mixes Bayer and mono frames.
+    //
+    // The batch-level Bayer pattern comes from frame 0 alone and the Phase A
+    // loop debayers on that one global, so the two orderings are wrong in
+    // different directions. Mono first: the Bayer frame is never demosaiced
+    // and the OSC routing branches read channels 1 and 2 of a one-channel
+    // image, which Image::at does not bounds-check. Bayer first: every mono
+    // frame IS demosaiced as though it were a CFA mosaic, and BROADBAND_L
+    // routes channel 0 of that fabricated image into the L slot -- no fault,
+    // wrong pixels.
+    //
+    // Debayering per frame would fix the read, but it would then put two
+    // geometries in one batch, which lands on the same Phase B limitation as
+    // multi-filter mono: FrameCache is keyed on geometry and cannot keep two
+    // frame sets apart. So refuse until that is addressed.
+    if (saw_bayer_frame && saw_mono_frame) {
+        ExecuteResult err{};
+        err.ok    = false;
+        err.error = "This batch mixes Bayer (CFA) frames with mono frames. "
+                    "NukeX debayers a batch according to its first frame, so "
+                    "one of the two groups would be decoded the wrong way -- "
+                    "silently, in the direction that does not crash. Stack the "
+                    "Bayer frames and the mono frames separately and combine "
+                    "the results.";
+        obs.message(err.error);
+        return err;
+    }
+
     if (bayer == BayerPattern::NONE && n_ch > 1) {
         std::string slots;
         for (int i = 0; i < n_ch; i++) {
@@ -556,12 +587,24 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         ChannelConfig per_frame_cfg = ChannelConfig::from_filter(frame_filter);
         ChannelConfig merged = ChannelConfig::merge(cube.channel_config, per_frame_cfg);
         if (merged.n_channels > cube.allocated_channels()) {
-            obs.message("Internal error: frame " + std::to_string(f + 1)
-                        + " needs slot " + std::to_string(merged.n_channels)
+            // Reachable without a programmer error: if the measurement pass
+            // could not read this frame but Phase A could -- a transient I/O
+            // condition -- its filter never entered the union. std::abort()
+            // here would take the whole PixInsight session down with no
+            // chance to save, so fail the stack loudly instead.
+            ExecuteResult err{};
+            err.ok    = false;
+            err.error = "Frame " + std::to_string(f + 1) + " needs channel slot "
+                        + std::to_string(merged.n_channels)
                         + " but the cube was allocated for "
                         + std::to_string(cube.allocated_channels())
-                        + " channels. The measurement pass missed this frame's filter.");
-            std::abort();
+                        + ". Its filter was not seen when the frames were "
+                        "measured, which usually means that frame could not be "
+                        "read at that point. Check the file is readable and "
+                        "run the stack again.";
+            obs.message(err.error);
+            obs.end_phase();
+            return err;
         }
         cube.channel_config = merged;
 
