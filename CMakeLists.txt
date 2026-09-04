@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
-project(NukeX VERSION 4.0.0 LANGUAGES CXX)
+# C is enabled for third_party/tweetnacl/tweetnacl.c (Ed25519 verification and
+# SHA-512). Without it CMake emits a compile rule with no C compiler behind
+# it, silently produces no object, and fails at the ar step. Vendored deps
+# pulled in by FetchContent (cfitsio) declare their own project() and are
+# unaffected either way.
+project(NukeX VERSION 4.0.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
