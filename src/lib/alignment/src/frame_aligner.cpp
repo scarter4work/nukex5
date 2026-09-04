@@ -47,7 +47,12 @@ FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_ind
         !result.channels.empty()
         && !result.channels.negligible(corner_radius,
                                        kNegligibleChannelShiftPx);
-    if (!channels_matter) result.channels = ChannelTransforms{};
+    // result.channels is kept even when it does not matter enough to apply --
+    // it is a measurement, and the Fit rung it recorded (including a
+    // deliberate Fit::Identity from the fallback ladder) is reported
+    // downstream. Only the decision to warp with it depends on
+    // channels_matter; each warp call below passes the transform only when
+    // it does.
 
     if (frame_index == ref_index_) {
         // This IS the reference. Matching it against its own catalog would
@@ -86,7 +91,7 @@ FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_ind
     if (!result.alignment.alignment_failed) {
         result.image = HomographyComputer::warp(
             frame, result.alignment.H, ref_width_, ref_height_,
-            result.channels);
+            channels_matter ? result.channels : ChannelTransforms{});
     } else if (channels_matter) {
         // Failed alignment: the frame is still stacked, with its weight
         // penalised, so its channels still have to be put right. The

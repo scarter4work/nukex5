@@ -4,6 +4,7 @@
 #include <Eigen/SVD>
 #include <random>
 #include <cmath>
+#include <algorithm>
 
 namespace nukex {
 
@@ -314,6 +315,13 @@ Image HomographyComputer::warp(const Image& source, const HomographyMatrix& H,
                                const ChannelTransforms& channels) {
     Image output(output_width, output_height, source.n_channels());
 
+    // A source narrower or shorter than 2 px has no `+1` neighbour for
+    // bilinear interpolation to reach. Rather than let the clamp below
+    // compute a negative index, return the zero-filled output -- the same
+    // thing the old bounds check produced for such an image, since sx could
+    // never satisfy `sx >= sw - 1` when sw <= 1.
+    if (source.width() < 2 || source.height() < 2) return output;
+
     // Compute inverse H for backward mapping
     // H maps source→ref, so H_inv maps ref→source
     Eigen::Matrix3f He;
@@ -344,12 +352,19 @@ Image HomographyComputer::warp(const Image& source, const HomographyMatrix& H,
 
                 // Bilinear interpolation
                 if (!std::isfinite(sx) || !std::isfinite(sy)) continue;
-                if (sx < 0 || sx >= sw - 1 || sy < 0 || sy >= sh - 1) continue;
+                if (sx < 0 || sx > sw - 1 || sy < 0 || sy > sh - 1) continue;
 
-                int ix = static_cast<int>(sx);
-                int iy = static_cast<int>(sy);
-                float fx = sx - ix;
-                float fy = sy - iy;
+                // Clamp the base index so the +1 neighbour stays in range, rather than
+                // refusing the sample. Without this the last row and column are dropped:
+                // with an identity homography sx == x, so x == sw-1 failed the old
+                // `sx >= sw - 1` test and the output edge was left at zero. That began to
+                // matter when the reference frame started being warped rather than cloned
+                // -- it used to keep its edge -- and the stacker feeds every pixel into
+                // the accumulator with no no-data guard, so those zeros count as samples.
+                const int ix = std::min(static_cast<int>(sx), sw - 2);
+                const int iy = std::min(static_cast<int>(sy), sh - 2);
+                const float fx = sx - ix;
+                const float fy = sy - iy;
 
                 float v00 = source.at(ix,     iy,     ch);
                 float v10 = source.at(ix + 1, iy,     ch);
