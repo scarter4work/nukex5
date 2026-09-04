@@ -2,6 +2,7 @@ add_library(nukex4_calibration STATIC
     src/qe_database.cpp
     src/channel_decomposer.cpp
     src/ed25519_verify.cpp
+    src/qe_update.cpp
     ${CMAKE_SOURCE_DIR}/third_party/tweetnacl/tweetnacl.c
 )
 
