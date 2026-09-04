@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <string>
 
 namespace nukex {
 namespace {
@@ -316,6 +318,40 @@ ChannelTransforms measure_channel_transforms(
         out.per_channel[ch] = fit_channel(pairs, config);
     }
 
+    return out;
+}
+
+std::string describe_channel_transforms(const ChannelTransforms& ct,
+                                        double radius) {
+    if (ct.empty()) return {};
+
+    std::string out;
+    for (size_t ch = 0; ch < ct.per_channel.size(); ch++) {
+        if (static_cast<int>(ch) == ct.reference_channel) continue;
+        const ChannelTransform& t = ct.per_channel[ch];
+
+        char buf[192];
+        switch (t.fit) {
+        case ChannelTransform::Fit::Affine:
+            std::snprintf(buf, sizeof(buf),
+                          "ch%zu affine %+.0f ppm t=(%+.2f,%+.2f) "
+                          "n=%d res=%.3fpx max=%.3fpx",
+                          ch, (t.s - 1.0) * 1e6, t.tx, t.ty,
+                          t.n_stars, t.residual, t.max_displacement(radius));
+            break;
+        case ChannelTransform::Fit::TranslationOnly:
+            std::snprintf(buf, sizeof(buf),
+                          "ch%zu translation t=(%+.2f,%+.2f) n=%d res=%.3fpx",
+                          ch, t.tx, t.ty, t.n_stars, t.residual);
+            break;
+        case ChannelTransform::Fit::Identity:
+            std::snprintf(buf, sizeof(buf),
+                          "ch%zu identity (nothing measurable)", ch);
+            break;
+        }
+        if (!out.empty()) out += "; ";
+        out += buf;
+    }
     return out;
 }
 

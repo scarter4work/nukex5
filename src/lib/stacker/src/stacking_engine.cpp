@@ -17,6 +17,7 @@
 #include "nukex/io/filter_alias.hpp"
 #include "nukex/alignment/frame_aligner.hpp"
 #include "nukex/alignment/reference_selector.hpp"
+#include "nukex/alignment/channel_registration.hpp"
 // TASK-14-COLLAPSE: same — pImpl-only include, can move to the
 // header once the namespace collision is gone.
 #include "nukex/calibration/qe_database.hpp"
@@ -559,7 +560,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         // batch — only the first frame's UNKNOWN-on-Bayer is fatal).
         bool frame_is_bayer = parse_bayer_pattern(meta.bayer_pattern) != BayerPattern::NONE;
         if (frame_filter.cls == FilterClass::UNKNOWN && frame_is_bayer) {
-            obs.advance(1, "  skipped — unknown FILTER='" + frame_filter.name +
+            obs.advance(1, "  skipped -- unknown FILTER='" + frame_filter.name +
                            "' on Bayer frame (add it to a qe_overrides.json selected in the NukeX interface to recover)");
             // Filter rejection: the frame was skipped because its FILTER
             // keyword is not present in the QE database. This is not an
@@ -639,7 +640,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
 
         // 4. Align
         // Pre-check saturation so a blown-out frame gets a specific log line
-        // ("SKIPPED — blown out, X%") rather than the generic
+        // ("SKIPPED -- blown out, X%") rather than the generic
         // "aligned: FAILED (stars=0)".  The actual guard that keeps
         // StarDetector fast lives in StarDetector::detect — this is purely
         // for log clarity in the Process Console.
@@ -660,7 +661,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             char pct[16];
             std::snprintf(pct, sizeof(pct), "%.1f", sat_frac * 100.0f);
             obs.advance(0,
-                std::string("  aligned: SKIPPED (blown out — ") + pct
+                std::string("  aligned: SKIPPED (blown out -- ") + pct
                 + "% pixels at saturation)");
         } else {
            const auto& a = aligned.alignment;
@@ -677,6 +678,38 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                           + ", rms=" + rms_str + " px"
                           + (a.is_meridian_flipped ? ", meridian-flipped" : "")
                           + ")");
+        }
+
+        // Channel registration, when there is something to say about it.
+        // AlignedFrame::channels is populated whenever a colour frame was
+        // measured, whether or not the correction was applied, so silence
+        // alone cannot be the guard here -- it would fire on every frame of a
+        // well-corrected rig, each reporting a few negligible ppm that was
+        // never applied. Report a frame only when the correction actually
+        // moved pixels, or when the fit gave up on some non-reference
+        // channel: that second case is a frame with too few isolated stars
+        // to measure, which is the opposite situation from "nothing was
+        // wrong" and must not look the same in the log.
+        if (!aligned.channels.empty()) {
+            const double corner_radius =
+                std::hypot(image.width() / 2.0, image.height() / 2.0);
+            const bool applied = !aligned.channels.negligible(
+                corner_radius, kNegligibleChannelShiftPx);
+            bool gave_up = false;
+            for (size_t ch = 0; ch < aligned.channels.per_channel.size(); ch++) {
+                if (static_cast<int>(ch) == aligned.channels.reference_channel)
+                    continue;
+                if (aligned.channels.per_channel[ch].fit ==
+                    ChannelTransform::Fit::Identity) {
+                    gave_up = true;
+                    break;
+                }
+            }
+            if (applied || gave_up) {
+                const std::string desc =
+                    describe_channel_transforms(aligned.channels, corner_radius);
+                if (!desc.empty()) obs.advance(0, "  channel reg: " + desc);
+            }
         }
 
         // 5. Cache aligned frame into the geometry-matched cache.

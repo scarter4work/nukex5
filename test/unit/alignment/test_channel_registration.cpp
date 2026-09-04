@@ -344,3 +344,60 @@ TEST_CASE("an outlier centroid is clipped out of the fit",
     CHECK(std::abs(red.tx - tx) < 0.02);
     CHECK(red.n_stars < int(f.catalog.stars.size()));
 }
+
+// --- console reporting ---------------------------------------------------
+
+TEST_CASE("describe_channel_transforms names the rung and the size",
+          "[channel_registration]") {
+    ChannelTransforms ct;
+    ct.cx = 399.5; ct.cy = 399.5; ct.reference_channel = 1;
+    ct.per_channel.resize(3);
+    ct.per_channel[0] = ChannelTransform{1.000238, 0.31, -0.12, 187, 0.043,
+                                         ChannelTransform::Fit::Affine};
+    ct.per_channel[1].fit = ChannelTransform::Fit::Identity;
+    ct.per_channel[2] = ChannelTransform{1.0, 0.02, -0.01, 190, 0.031,
+                                         ChannelTransform::Fit::TranslationOnly};
+
+    const std::string s = describe_channel_transforms(ct, 565.0);
+
+    // The rung, the size of the correction, and the star count all have to be
+    // there: a user seeing a moved golden needs to know why from the log.
+    CHECK(s.find("ch0") != std::string::npos);
+    CHECK(s.find("affine") != std::string::npos);
+    CHECK(s.find("238 ppm") != std::string::npos);
+    CHECK(s.find("n=187") != std::string::npos);
+    CHECK(s.find("ch2") != std::string::npos);
+    CHECK(s.find("translation") != std::string::npos);
+    CHECK(s.find("ch1") == std::string::npos);   // the reference is not reported
+
+    // ASCII only. PCL reads const char* as ISO-8859-1, so a stray UTF-8 byte
+    // reaches the Process Console as mojibake.
+    for (unsigned char c : s) CHECK(c < 0x80);
+}
+
+TEST_CASE("describe_channel_transforms says so when there is nothing to say",
+          "[channel_registration]") {
+    CHECK(describe_channel_transforms(ChannelTransforms{}, 565.0).empty());
+}
+
+TEST_CASE("describe_channel_transforms names channels the fit gave up on",
+          "[channel_registration]") {
+    // A frame with too few isolated stars to measure anything is the opposite
+    // situation from a frame whose channels already agreed: this one needs to
+    // be visible in the console too, not silently indistinguishable from the
+    // near-identity skip.
+    ChannelTransforms ct;
+    ct.cx = 399.5; ct.cy = 399.5; ct.reference_channel = 1;
+    ct.per_channel.resize(3);
+    ct.per_channel[0].fit = ChannelTransform::Fit::Identity;
+    ct.per_channel[1].fit = ChannelTransform::Fit::Identity;   // reference
+    ct.per_channel[2].fit = ChannelTransform::Fit::Identity;
+
+    const std::string s = describe_channel_transforms(ct, 565.0);
+
+    CHECK_FALSE(s.empty());
+    CHECK(s.find("ch0") != std::string::npos);
+    CHECK(s.find("ch2") != std::string::npos);
+    CHECK(s.find("identity") != std::string::npos);
+    CHECK(s.find("ch1") == std::string::npos);   // the reference is not reported
+}

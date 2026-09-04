@@ -5,9 +5,19 @@
 #include "nukex/io/image.hpp"
 
 #include <cmath>
+#include <string>
 #include <vector>
 
 namespace nukex {
+
+/// A channel correction smaller than this at the field corner is not worth a
+/// resample: it is below the centroid noise floor measured on real data
+/// (0.058 px between blue and green on the M3 set) by a wide margin.
+///
+/// Shared between FrameAligner (which decides whether to warp) and the
+/// console report (which decides whether to say so) -- one definition so the
+/// two can never disagree about what "applied" means.
+constexpr double kNegligibleChannelShiftPx = 0.01;
 
 /// How one channel is displaced relative to the reference channel, within a
 /// single frame.
@@ -180,5 +190,17 @@ inline ChannelTransforms measure_channel_transforms(
     return measure_channel_transforms(image, stars, reference_channel,
                                       ChannelRegistrationConfig{});
 }
+
+/// One line describing what channel registration did, for the Process
+/// Console. Empty when there was nothing to report.
+///
+/// `radius` is where the displacement is quoted -- normally the frame corner,
+/// which is where a scale term is largest and where a user looking at their
+/// stars will notice.
+///
+/// ASCII only: PCL reads const char* as ISO-8859-1, so a UTF-8 character here
+/// reaches the console as mojibake.
+std::string describe_channel_transforms(const ChannelTransforms& ct,
+                                        double radius);
 
 } // namespace nukex
