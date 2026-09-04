@@ -269,3 +269,29 @@ TEST_CASE("warp with empty channel transforms matches the old warp exactly",
     for (size_t i = 0; i < a.data_size(); i++)
         REQUIRE(a.data()[i] == b.data()[i]);
 }
+
+TEST_CASE("warp with identity preserves the last row and column exactly",
+          "[homography]") {
+    // With an identity homography sx == x and sy == y, so the last column
+    // (x == sw-1) and last row (y == sh-1) used to fail the old
+    // `sx >= sw - 1` / `sy >= sh - 1` bounds check and come out zero. That
+    // was cosmetic while the reference frame was always frame.clone() --
+    // once Task 5 started warping the reference frame itself, those zeros
+    // fed the stacker's accumulator as if they were real samples.
+    nukex::Image src(10, 8, 2);
+    for (int c = 0; c < 2; c++)
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 10; x++)
+                src.at(x, y, c) = float((x * 11 + y * 17 + c * 31) % 97) / 97.0f;
+
+    nukex::Image out = nukex::HomographyComputer::warp(
+        src, nukex::HomographyMatrix::identity(), 10, 8,
+        nukex::ChannelTransforms{});
+
+    for (int c = 0; c < 2; c++) {
+        for (int x = 0; x < 10; x++)
+            REQUIRE(out.at(x, 7, c) == src.at(x, 7, c));
+        for (int y = 0; y < 8; y++)
+            REQUIRE(out.at(9, y, c) == src.at(9, y, c));
+    }
+}

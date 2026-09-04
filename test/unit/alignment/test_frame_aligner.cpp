@@ -166,8 +166,9 @@ TEST_CASE("FrameAligner: reset clears an explicitly set reference", "[aligner]")
 }
 
 // --- per-channel registration through the aligner ------------------------
-
-#include "nukex/alignment/channel_registration.hpp"
+//
+// nukex/alignment/channel_registration.hpp is reachable transitively through
+// frame_aligner.hpp, already included above.
 
 namespace {
 
@@ -202,6 +203,35 @@ nukex::Image make_colour_frame(int w, int h, double red_dx, double red_dy,
             blob(2, x, y);
             blob(0, x + red_dx, y + red_dy);
         }
+    return img;
+}
+
+// A 3-channel frame with only 3 stars -- too few to reach the matcher's
+// 8-match minimum against a 25-star reference catalog, so alignment fails
+// for a reason unrelated to how well the stars themselves would line up.
+// Used to test that a failed-alignment frame still gets its channels put
+// right.
+nukex::Image make_sparse_colour_frame(int w, int h, double red_dx, double red_dy) {
+    nukex::Image img(w, h, 3);
+    img.fill(0.002f);
+    auto blob = [&](int ch, double cx, double cy) {
+        for (int dy = -6; dy <= 6; dy++)
+            for (int dx = -6; dx <= 6; dx++) {
+                int px = int(std::lround(cx)) + dx;
+                int py = int(std::lround(cy)) + dy;
+                if (px < 0 || px >= w || py < 0 || py >= h) continue;
+                double ex = px - cx, ey = py - cy;
+                img.at(px, py, ch) += float(0.5 * std::exp(-(ex*ex + ey*ey) / 5.12));
+            }
+    };
+    static const double positions[3][2] = {
+        {60.0, 70.0}, {250.0, 120.0}, {150.0, 300.0}};
+    for (const auto& p : positions) {
+        double x = p[0], y = p[1];
+        blob(1, x, y);
+        blob(2, x, y);
+        blob(0, x + red_dx, y + red_dy);
+    }
     return img;
 }
 
@@ -308,4 +338,24 @@ TEST_CASE("channel registration can be switched off",
 
     REQUIRE(out.channels.empty());
     CHECK(std::abs(channel_offset_x(out.image, 0, 1, 30, 90, 30, 90)) > 1.0);
+}
+
+TEST_CASE("a frame whose alignment fails still gets its channels registered",
+          "[frame_aligner]") {
+    // Alignment fails here because the frame has too few stars to reach the
+    // matcher's 8-match minimum, not because the stars are badly placed.
+    // This is the one image-producing path whose output geometry is the
+    // frame's own dimensions rather than the reference's, and one of only
+    // two paths that changed from cloning to warping -- it needs its own
+    // coverage rather than an inference from the reference-frame path.
+    nukex::Image ref    = make_colour_frame(400, 400, 1.2, 0.0);
+    nukex::Image sparse = make_sparse_colour_frame(400, 400, 1.2, 0.0);
+
+    nukex::FrameAligner aligner;
+    aligner.set_reference(ref, 0);
+    (void)aligner.align(ref, 0);
+    auto out = aligner.align(sparse, 1);
+
+    REQUIRE(out.alignment.alignment_failed);
+    CHECK(std::abs(channel_offset_x(out.image, 0, 1, 30, 90, 30, 90)) < 0.06);
 }
