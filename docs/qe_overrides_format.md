@@ -55,11 +55,32 @@ the FITS `FILTER` keyword, not by the raw header text. Recognised spellings
 (case and punctuation ignored): `HaO3`/`HaOIII` → `HaO3`; `S2O3`/`SIIOIII` →
 `S2O3`; `L-eXtreme`, `L-eNhance`, `L-Ultimate`, `ALP-T`; `Ha`/`Halpha`,
 `OIII`/`O3`, `SII`/`S2`; `L`/`Luminance`/`L-Pro`/`LPS`/`UV-IR-cut`/`CLS`
-(broadband); `R`, `G`, `B`. A dual-narrowband filter with any other name on a
-Bayer camera stops the batch at start — rename the `FILTER` keyword to one of
-the spellings above, or set it to one of the canonical names and add a
-matching `filters` entry here. Mono frames with an unknown `FILTER` are
-treated as luminance with a warning.
+(broadband); `R`, `G`, `B`; `HaO3S2`/`HaOIIISII`, and the L-Quad Enhance and
+L-Synergy spellings, for a filter passing all three of Ha, OIII and SII.
+
+A dual-narrowband filter with any other name on a Bayer camera stops the batch
+at start, because guessing would mis-colour the result silently. **NukeX offers
+to learn it:** the dialog asks which emission lines the filter passes and
+records the answer in `<user-data>/nukex4/filter_aliases.json`, then re-runs
+the stack. That file is plain JSON you can read, edit or delete:
+
+```json
+{ "schema_version": 1, "aliases": { "lqef": "HaO3S2" } }
+```
+
+Keys are the header name reduced to lowercase alphanumerics, so `L-QEF`,
+`l qef` and `Lqef` are one entry. Values must be a canonical name the database
+carries. The file is consulted *after* the shipped table, so an entry can add a
+spelling but never redefine what `Ha` or `HaO3` mean.
+
+H-beta is never offered as a choice. At 486 nm it falls on the same blue and
+green photosites as OIII at 501 nm, so a Q matrix carrying both columns is
+rank-deficient and the decomposition has no unique answer; a quad-band filter
+is described by its other three lines. For the same reason Ha and SII without
+OIII has no calibrated entry, and the dialog refuses that combination rather
+than accepting it and failing later.
+
+Mono frames with an unknown `FILTER` are treated as luminance with a warning.
 
 ## Override semantics
 

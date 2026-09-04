@@ -58,6 +58,7 @@ add_library(nukex4_io STATIC
     src/debayer.cpp
     src/flat_calibration.cpp
     src/filter_classifier.cpp
+    src/filter_alias.cpp
 )
 
 target_include_directories(nukex4_io
@@ -70,7 +71,7 @@ target_include_directories(nukex4_io
 
 target_link_libraries(nukex4_io
     PUBLIC  nukex4_core
-    PRIVATE ${_nukex_cfitsio_libs}
+    PRIVATE ${_nukex_cfitsio_libs} nlohmann_json::nlohmann_json
 )
 
 target_compile_features(nukex4_io PUBLIC cxx_std_17)

@@ -145,6 +145,22 @@ Filter FilterClassifier::classify(const FrameMetadata& meta) {
         return out;
     }
 
+    // Not in the shipped table. Before giving up, consult what the user has
+    // taught us: the interface offers to learn an unrecognised name by asking
+    // which emission lines it passes, and records the answer against the
+    // normalised header value. Checked here, last, so a taught name can only
+    // add a spelling -- it can never redefine Ha or HaO3.
+    const std::string taught = aliases_.lookup(normalized);
+    if (!taught.empty()) {
+        cls = lookup_known(FilterAliasStore::normalize(taught), canonical, bw);
+        if (cls != FilterClass::UNKNOWN) {
+            out.cls       = cls;
+            out.name      = canonical;
+            out.bandwidth = bw;
+            return out;
+        }
+    }
+
     if (is_bayer) {
         out.cls  = FilterClass::UNKNOWN;
         out.name = meta.filter;

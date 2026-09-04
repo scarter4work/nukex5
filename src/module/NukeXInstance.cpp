@@ -8,6 +8,8 @@
 
 #include "NukeXProgress.h"
 #include "RatingDialog.h"
+#include "FilterDialog.h"
+#include "nukex/io/filter_alias.hpp"
 #include "nukex/io/filter_classifier.hpp"
 #include "nukex/calibration/qe_update_state.hpp"
 #include <filesystem>
@@ -493,9 +495,46 @@ bool NukeXInstance::ExecuteGlobal()
    config.qe_database_path = ResolveQEDatabasePath();
    // Shipped QE database lives beside the module install: <base>/share/qe_database.json.
 
+   // Filter names this user has taught NukeX, beside the Phase 8 state.
+   const std::string alias_path = QEUserDataRoot() + "/filter_aliases.json";
+   config.filter_alias_path = alias_path;
+
    // Execute pipeline with progress reporting
    nukex::StackingEngine engine( config );
    auto result = engine.execute( light_paths, flat_paths, &progress );
+
+   // An unrecognised FILTER stops the batch rather than guessing, which is
+   // right, but FITS FILTER values are whatever the capture software wrote and
+   // no shipped table can list them all. Offer to learn this one, then run
+   // again -- once. A second failure is shown as itself, not asked about
+   // again.
+   if ( !result.ok && !result.unknown_filter.empty()
+        && std::getenv( "NUKEX_PHASE8_NO_POPUP" ) == nullptr )
+   {
+      FilterDialog dlg( result.unknown_filter );
+      auto taught = dlg.Run();
+      if ( taught.saved )
+      {
+         nukex::FilterAliasStore aliases;
+         aliases.load( alias_path );          // a missing file is fine
+         aliases.set( result.unknown_filter, taught.canonical );
+         if ( aliases.save( alias_path ) )
+         {
+            progress.message( String().Format(
+               "Filter '%s' recorded as %s in %s. Re-stacking.",
+               result.unknown_filter.c_str(), taught.canonical.c_str(),
+               alias_path.c_str() ).ToUTF8().c_str() );
+            nukex::StackingEngine retry( config );
+            result = retry.execute( light_paths, flat_paths, &progress );
+         }
+         else
+         {
+            progress.message( String().Format(
+               "** Could not write %s, so the filter was not remembered.",
+               alias_path.c_str() ).ToUTF8().c_str() );
+         }
+      }
+   }
 
    // Check cancellation
    if ( progress.is_cancelled() )

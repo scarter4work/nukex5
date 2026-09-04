@@ -14,6 +14,7 @@
 #include "nukex/core/filter.hpp"
 #include "nukex/core/cube.hpp"
 #include "nukex/core/channel_config.hpp"
+#include "nukex/io/filter_alias.hpp"
 #include "synthetic_fits.hpp"
 
 #include <filesystem>
@@ -194,4 +195,48 @@ TEST_CASE("Phase A: unknown FILTER on mono routes into the L slot (spec 6.3, e.g
     int L_idx = result.cube->channel_config.slot_index("L");
     REQUIRE(L_idx != -1);
     REQUIRE(result.cube->at(8, 8).channel(L_idx).welford.mean == Catch::Approx(0.5f).margin(0.05f));
+}
+
+TEST_CASE("Phase A: an unrecognised filter names itself in the result",
+          "[integration][phase_a]") {
+    // The interface can only offer to learn the name if it is told which name
+    // stopped the batch. Matching on the message text would break the first
+    // time the wording changed.
+    auto tmp = fs::temp_directory_path() / "phase_a_unknown_named.fits";
+    test_util::write_synthetic_bayer(tmp.string(), 16, 16, "RGGB", "ASI585MC",
+                                     "WhateverTheCaptureSoftwareWrote", 0.5f);
+
+    StackingEngine::Config cfg;
+    cfg.qe_database_path = (fs::path(NUKEX_TEST_FIXTURES_DIR) / "qe" / "minimal_db.json").string();
+    StackingEngine engine(cfg);
+    auto r = engine.execute({tmp.string()}, {}, nullptr);
+
+    REQUIRE_FALSE(r.ok);
+    REQUIRE(r.unknown_filter == "WhateverTheCaptureSoftwareWrote");
+}
+
+TEST_CASE("Phase A: a taught filter name stacks", "[integration][phase_a]") {
+    // The other half: once the user has said which lines it passes, the same
+    // batch runs without asking again.
+    auto tmp = fs::temp_directory_path() / "phase_a_taught.fits";
+    test_util::write_synthetic_bayer(tmp.string(), 16, 16, "RGGB", "ASI585MC",
+                                     "MyDuoBand", 0.5f);
+    auto alias_path = fs::temp_directory_path() / "phase_a_aliases.json";
+    {
+        FilterAliasStore s;
+        s.set("MyDuoBand", "HaO3");
+        REQUIRE(s.save(alias_path.string()));
+    }
+
+    StackingEngine::Config cfg;
+    cfg.qe_database_path = (fs::path(NUKEX_TEST_FIXTURES_DIR) / "qe" / "minimal_db.json").string();
+    cfg.filter_alias_path = alias_path.string();
+    StackingEngine engine(cfg);
+    auto r = engine.execute({tmp.string()}, {}, nullptr);
+
+    INFO("error: " << r.error);
+    REQUIRE(r.ok);
+    REQUIRE(r.unknown_filter.empty());
+    REQUIRE(r.cube->channel_config.slot_index("R_HaO3") != -1);
+    fs::remove(alias_path);
 }

@@ -63,6 +63,10 @@ public:
         std::string           qe_database_path = "share/qe_database.json";
 
         std::string           qe_override_path; // optional; empty = none
+        // Filter names the user has taught NukeX, consulted after the shipped
+        // table. FITS FILTER values are whatever the capture software wrote,
+        // so no shipped table can enumerate them. Empty = none.
+        std::string           filter_alias_path;
         GPUExecutorConfig     gpu_config;
     };
 
@@ -113,6 +117,11 @@ public:
         int                    n_frames_processed        = 0;
         int                    n_frames_failed_alignment = 0;  // real alignment misses only
         int                    n_frames_rejected_filter  = 0;  // unknown FILTER on Bayer
+        // The FILTER value that stopped the batch, when that is why it
+        // stopped; empty otherwise. The interface offers to learn it, and
+        // needs the name to do so -- matching on the message text would break
+        // the first time the wording changed.
+        std::string            unknown_filter;
         bool qe_generic_camera_fallback = false; // spec 6.3: INSTRUME not in QE DB, generic Sony OSC QE used
 
         ExecuteResult();
