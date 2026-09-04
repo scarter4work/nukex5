@@ -56,7 +56,7 @@ repository/qe_database.json        + qe_database.json.sig
 {
   "schema_version": 1,
   "db_version": 14,
-  "db_sha256": "<64 hex>",
+  "db_sha512": "<128 hex>",
   "db_bytes": 44225,
   "n_cameras": 61,
   "n_sensors": 26,
@@ -67,9 +67,9 @@ repository/qe_database.json        + qe_database.json.sig
 
 `db_version` is a monotonically increasing integer, independent of the module version. `schema_version` matches the database's own and gates compatibility.
 
-**The manifest is signed as well as the database.** An unsigned manifest would let anyone able to serve files pin a client to an old version or forge the summary shown in the consent prompt. Both signatures are detached Ed25519 over the exact file bytes, base64-encoded.
+**The manifest is signed as well as the database.** An unsigned manifest would let anyone able to serve files pin a client to an old version or forge the summary shown in the consent prompt. Both signatures are detached Ed25519 over the exact file bytes, base64-encoded. The digest is SHA-512 rather than SHA-256 deliberately: `nukex4_calibration` does not link PCL, so it cannot reach `pcl::SHA256`, and TweetNaCl already carries SHA-512 as `crypto_hash()`. Reusing it avoids vendoring a second hash for no gain.
 
-Verification is belt-and-braces: the manifest signature must verify, *then* the downloaded database must satisfy both its own signature and the `db_sha256` the signed manifest names. The redundancy costs nothing and closes the gap where a valid-but-different signed database is substituted for the one the manifest describes.
+Verification is belt-and-braces: the manifest signature must verify, *then* the downloaded database must satisfy both its own signature and the `db_sha512` the signed manifest names. The redundancy costs nothing and closes the gap where a valid-but-different signed database is substituted for the one the manifest describes.
 
 ## 5. Components and Boundaries
 
@@ -126,7 +126,7 @@ Every failure preserves the working database and none of them block stacking.
 |---|---|
 | Offline, DNS failure, timeout, TLS verify failure | Silent. Record the attempt, retry next interval. A telescope laptop in a field is the normal case, not an error. |
 | **Signature invalid (manifest or database)** | **Loud** Process Console warning naming the file. Never installed, never silently retried — this is possible tampering, not a network hiccup. |
-| `db_sha256` mismatch against signed manifest | Discard, warn, treat as a failed check. |
+| `db_sha512` mismatch against signed manifest | Discard, warn, treat as a failed check. |
 | `schema_version` newer than the module supports | Warn once: the module is too old for this data. Do not install. |
 | `db_version` older than what is installed | Refuse. Prevents a rollback attack and accidental republication of stale data. |
 | Install path unwritable / disk full | Warn once, keep the current database. |
@@ -159,7 +159,7 @@ The injected `Fetcher` means the whole matrix runs offline and deterministically
 - Tampered database body → `BAD_SIGNATURE`, nothing written
 - Tampered manifest (forged `db_version`) → `BAD_SIGNATURE`, no fetch of the database
 - Database signed by the wrong key → `BAD_SIGNATURE`
-- Valid signature, wrong `db_sha256` → `DIGEST_MISMATCH`
+- Valid signature, wrong `db_sha512` → `DIGEST_MISMATCH`
 - `db_version` lower than installed → `REFUSED_ROLLBACK`
 - `schema_version` above supported → `SCHEMA_TOO_NEW`
 - Fetch failure → `OFFLINE`, state records the attempt, nothing written
