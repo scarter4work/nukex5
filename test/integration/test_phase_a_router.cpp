@@ -115,6 +115,55 @@ TEST_CASE("Phase A: a mono L + Bayer HaO3 batch is refused, not silently mixed",
     REQUIRE(result.error.find("separately") != std::string::npos);
 }
 
+TEST_CASE("Phase A: a batch mixing Bayer and mono frames is refused in either order",
+          "[integration][phase_a]") {
+    // The batch-level Bayer pattern is taken from frame 0 alone and line ~569
+    // debayers on that one global, so the two orderings fail differently and
+    // both silently:
+    //
+    //   mono first  -> the Bayer frame is never demosaiced, and the OSC
+    //                  routing branches read channels 1 and 2 of a
+    //                  one-channel image. Image::at is unchecked, so that is
+    //                  an out-of-bounds read.
+    //   Bayer first -> every mono frame IS demosaiced, as if it were a CFA
+    //                  mosaic, and BROADBAND_L routes channel 0 of that
+    //                  fabricated image into the L slot. No fault, wrong
+    //                  pixels.
+    //
+    // Debayering per frame instead would fix the read but produce mixed
+    // geometries in one batch, which lands on the same Phase B limitation as
+    // multi-filter mono: FrameCache is keyed on geometry and cannot keep two
+    // frame sets apart. So the batch is refused until that is addressed.
+    //
+    // Note for anyone tempted to assert on pixel values here instead: a
+    // uniform synthetic frame demosaics to itself, so a value assertion
+    // passes even when the frame was wrongly demosaiced. Refusal is the
+    // observable behaviour.
+    auto mono  = fs::temp_directory_path() / "phase_a_mix_mono.fits";
+    auto bayer = fs::temp_directory_path() / "phase_a_mix_bayer.fits";
+    test_util::write_synthetic_mono(mono.string(), 16, 16, "ASI2600MM", "L", 0.8f);
+    test_util::write_synthetic_bayer(bayer.string(), 16, 16, "RGGB", "ASI585MC", "HaO3", 0.5f);
+
+    StackingEngine::Config cfg;
+    cfg.qe_database_path = (fs::path(NUKEX_TEST_FIXTURES_DIR) / "qe" / "minimal_db.json").string();
+
+    SECTION("mono frame first") {
+        StackingEngine engine(cfg);
+        auto r = engine.execute({mono.string(), bayer.string()}, {}, nullptr);
+        REQUIRE_FALSE(r.ok);
+        INFO("error: " << r.error);
+        REQUIRE(r.error.find("separately") != std::string::npos);
+    }
+
+    SECTION("Bayer frame first") {
+        StackingEngine engine(cfg);
+        auto r = engine.execute({bayer.string(), mono.string()}, {}, nullptr);
+        REQUIRE_FALSE(r.ok);
+        INFO("error: " << r.error);
+        REQUIRE(r.error.find("separately") != std::string::npos);
+    }
+}
+
 TEST_CASE("Phase A: missing FILTER on mono (L_unnamed) routes into the L slot",
           "[integration][phase_a]") {
     auto tmp = fs::temp_directory_path() / "phase_a_mono_unnamed.fits";
