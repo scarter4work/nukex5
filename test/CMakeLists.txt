@@ -8,6 +8,8 @@ target_include_directories(catch2_main PUBLIC
 
 # Path to test/fixtures/, used by tests that load JSON/FITS fixtures from disk.
 add_compile_definitions(NUKEX_TEST_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/test/fixtures")
+# So a test can verify the ACTUAL published artifacts with the ACTUAL verifier.
+add_compile_definitions(NUKEX_REPOSITORY_DIR="${CMAKE_SOURCE_DIR}/repository")
 
 # Helper function to add a test executable.
 #

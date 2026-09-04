@@ -256,3 +256,70 @@ TEST_CASE("QEUpdater: an unwritable destination reports INSTALL_FAILED", "[qe_up
     REQUIRE(up.install(chk.manifest, "/proc/nukex_cannot_write/qe_database.json")
             == UpdateOutcome::INSTALL_FAILED);
 }
+
+// ------------------------------------------- the actually-published artifacts
+
+// This is the cross-check that matters most and is easiest to skip: the
+// signing tool is Python, the verifier is C++, and a disagreement about
+// base64 or byte order between them would ship undetected and reject every
+// update in the field. Verifying the real files with the real shipped key
+// makes that a build failure instead of a field failure.
+
+static std::string slurp_or_empty(const std::string& p) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return {};
+    return std::string((std::istreambuf_iterator<char>(in)),
+                        std::istreambuf_iterator<char>());
+}
+
+TEST_CASE("published artifacts verify against the shipped signing key", "[qe_update]") {
+    const std::string dir = NUKEX_REPOSITORY_DIR;
+
+    for (const char* name : { "qe_manifest.json", "qe_database.json" }) {
+        const std::string body = slurp_or_empty(dir + "/" + name);
+        const std::string sig  = slurp_or_empty(dir + "/" + name + ".sig");
+        INFO("artifact: " << name);
+        REQUIRE_FALSE(body.empty());
+        REQUIRE_FALSE(sig.empty());
+
+        std::vector<unsigned char> raw;
+        // Mirrors the decoder in qe_update.cpp; whitespace and padding only.
+        {
+            auto val = [](unsigned char c) -> int {
+                if (c >= 'A' && c <= 'Z') return c - 'A';
+                if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+                if (c >= '0' && c <= '9') return c - '0' + 52;
+                if (c == '+') return 62;
+                if (c == '/') return 63;
+                return -1;
+            };
+            int accum = 0, bits = 0;
+            for (unsigned char c : sig) {
+                if (c == '\n' || c == '\r' || c == ' ' || c == '=') continue;
+                const int v = val(c);
+                REQUIRE(v >= 0);
+                accum = (accum << 6) | v;
+                bits += 6;
+                if (bits >= 8) { bits -= 8; raw.push_back((accum >> bits) & 0xFF); }
+            }
+        }
+        REQUIRE(raw.size() == kEd25519SignatureBytes);
+        REQUIRE(ed25519_verify_detached(
+            raw.data(), raw.size(),
+            reinterpret_cast<const unsigned char*>(body.data()), body.size(),
+            qe_signing_public_key()));
+    }
+}
+
+TEST_CASE("the published database matches the digest its manifest names", "[qe_update]") {
+    const std::string dir = NUKEX_REPOSITORY_DIR;
+    const std::string db  = slurp_or_empty(dir + "/qe_database.json");
+    const std::string mf  = slurp_or_empty(dir + "/qe_manifest.json");
+    REQUIRE_FALSE(db.empty());
+    REQUIRE_FALSE(mf.empty());
+
+    const std::string got =
+        sha512_hex(reinterpret_cast<const unsigned char*>(db.data()), db.size());
+    INFO("manifest: " << mf);
+    REQUIRE(mf.find(got) != std::string::npos);
+}

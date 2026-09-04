@@ -34,6 +34,11 @@ enum class UpdateOutcome {
 
 const char* to_string(UpdateOutcome o);
 
+// The shipped signing public key (kEd25519PublicKeyBytes bytes). Published
+// data is signed with the matching private key, which lives outside this
+// repository beside the .xssk keys and is never committed.
+const unsigned char* qe_signing_public_key();
+
 struct QEManifest {
     int         schema_version = 0;
     int         db_version     = 0;
