@@ -16,6 +16,16 @@ MANIFEST="${REPO}/test/fixtures/e2e_manifest.json"
 BUILD_DIR="${NUKEX_BUILD_DIR:-${REPO}/build}"
 E2E_LOG="${BUILD_DIR}/e2e.log"
 
+# Run a single case by name. The full v5 corpus takes hours across four
+# stacks of real data; being able to do one case at a time keeps a long run
+# from being all-or-nothing.
+#   NUKEX_E2E_ONLY=bayer_nb_hao3_m16 make e2e-regen
+ONLY_ARG=""
+if [ -n "${NUKEX_E2E_ONLY:-}" ]; then
+    ONLY_ARG=",only=${NUKEX_E2E_ONLY}"
+    echo "NukeX E2E: restricted to case '${NUKEX_E2E_ONLY}'."
+fi
+
 REGEN_ARG=""
 if [ "${1:-}" = "regen" ] || [ "${NUKEX_E2E_REGEN:-}" = "1" ]; then
     REGEN_ARG=",regen=1"
@@ -28,6 +38,16 @@ rm -f /tmp/nukex_e2e_meta.txt /tmp/nukex_e2e_console.log
 # per-case subdirs as needed.
 OUTPUT_ROOT="$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m.get("output_root","/tmp/nukex_e2e"))' "${MANIFEST}")"
 rm -rf "${OUTPUT_ROOT}"
+
+# The frame cache too. NukeX creates a fresh nukex_cache_XXXXXX subdirectory
+# per run and does not always remove it, so without this the cache directory
+# grows by gigabytes per run. That went unnoticed while the cache lived in
+# /tmp (tmpfs, wiped on reboot) right up until it exhausted RAM mid-run.
+CACHE_DIR="$(python3 -c 'import json,sys,os; m=json.load(open(sys.argv[1])); print(m.get("cache_dir", os.path.expanduser("~/.cache/nukex_e2e_frames")))' "${MANIFEST}")"
+if [ -n "${CACHE_DIR}" ] && [ "${CACHE_DIR}" != "/" ]; then
+    rm -rf "${CACHE_DIR:?}"/nukex_cache_* 2>/dev/null || true
+    mkdir -p "${CACHE_DIR}"
+fi
 
 # Cap the run so a hung harness can't block CI forever.  60 min is ~3×
 # the longest observed good E2E on NGC7635 (primary + 3 sweeps ≈ 20 min)
@@ -47,7 +67,7 @@ export NUKEX_PHASE8_NO_POPUP=1
 # fresh-scan behaviour is what we want every run.
 timeout --kill-after=30s "${NUKEX_E2E_TIMEOUT}" \
     /opt/PixInsight/bin/PixInsight.sh --automation-mode --force-exit --default-modules \
-        "-r=${REPO}/tools/validate_e2e.js,manifest=${MANIFEST}${REGEN_ARG}" \
+        "-r=${REPO}/tools/validate_e2e.js,manifest=${MANIFEST}${REGEN_ARG}${ONLY_ARG}" \
         2>&1 | tee "${E2E_LOG}"
 
 echo ""

@@ -98,6 +98,13 @@ private:
       PushButton     QEOverride_Browse_Button;
       PushButton     QEOverride_Clear_Button;
 
+      // Camera-database updater. The check runs at most once per interval
+      // when this interface opens, and never while a stack is running.
+      HorizontalSizer QEUpdate_Sizer;
+      CheckBox       QEUpdate_CheckBox;
+      PushButton     QEUpdate_Check_Button;
+      Label          QEUpdate_Status_Label;
+
       // Phase 8 rating controls. Rate-last-run re-opens RatingDialog against
       // instance.lastRun (populated by ExecuteGlobal). SuppressRating persists
       // via TheNukeXProcess->set_rating_popup_suppressed (PCL Settings).
@@ -127,6 +134,15 @@ private:
    // QE override file picker.
    void e_QEOverrideBrowse( Button& sender, bool checked );
    void e_QEOverrideClear( Button& sender, bool checked );
+   void e_QEUpdateToggled( Button& sender, bool checked );
+   void e_QEUpdateCheck( Button& sender, bool checked );
+
+   // Shared by the interval check and the "Check now" button. When
+   // user_initiated is false the routine stays silent unless something is
+   // actually available -- an interface that opens with a modal dialog
+   // every time is worse than a stale database.
+   void CheckForDatabaseUpdate( bool user_initiated );
+   void UpdateDatabaseStatusLabel();
 
    // Phase 8 rating controls.
    void e_RateLastRun( Button& sender, bool checked );

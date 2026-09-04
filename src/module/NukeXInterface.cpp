@@ -6,7 +6,18 @@
 #include "NukeXParameters.h"
 #include "RatingDialog.h"
 
+#include "QEFetcher.h"
+
+#include "nukex/calibration/qe_update.hpp"
+#include "nukex/calibration/qe_update_state.hpp"
+
 #include <pcl/FileDialog.h>
+#include <pcl/MessageBox.h>
+#include <pcl/Console.h>
+
+#include <ctime>
+#include <cstdlib>
+#include <string>
 #include <pcl/ErrorHandler.h>
 
 namespace pcl
@@ -64,6 +75,11 @@ bool NukeXInterface::Launch( const MetaProcess&, const ProcessImplementation*, b
       GUI = new GUIData( *this );
       SetWindowTitle( "NukeX v4" );
       UpdateControls();
+      UpdateDatabaseStatusLabel();
+      // Interval-gated, silent when offline or up to date. This is what
+      // keeps the camera roster from going stale without anyone having to
+      // remember to look -- the failure mode this feature exists to avoid.
+      CheckForDatabaseUpdate( false );
    }
 
    dynamic = false;
@@ -313,7 +329,30 @@ NukeXInterface::GUIData::GUIData( NukeXInterface& w )
    Options_Sizer.Add( FinishingStretch_Sizer );
    Options_Sizer.Add( GPU_Sizer );
    Options_Sizer.Add( Rating_Sizer );
+   QEUpdate_CheckBox.SetText( "Check for camera database updates" );
+   QEUpdate_CheckBox.SetToolTip(
+      "<p>Periodically check whether a newer QE camera database has been "
+      "published, so newly released cameras are recognised without waiting "
+      "for a NukeX release.</p>"
+      "<p>Nothing is downloaded or installed without your consent, the check "
+      "never runs while a stack is in progress, and every published database "
+      "is cryptographically signed and verified before use. Being offline is "
+      "not an error.</p>" );
+   QEUpdate_CheckBox.OnClick( (Button::click_event_handler)&NukeXInterface::e_QEUpdateToggled, w );
+
+   QEUpdate_Check_Button.SetText( "Check now" );
+   QEUpdate_Check_Button.SetToolTip( "<p>Check for a newer camera database immediately.</p>" );
+   QEUpdate_Check_Button.OnClick( (Button::click_event_handler)&NukeXInterface::e_QEUpdateCheck, w );
+
+   QEUpdate_Status_Label.SetTextAlignment( TextAlign::Left | TextAlign::VertCenter );
+
+   QEUpdate_Sizer.SetSpacing( 4 );
+   QEUpdate_Sizer.Add( QEUpdate_CheckBox );
+   QEUpdate_Sizer.Add( QEUpdate_Check_Button );
+   QEUpdate_Sizer.Add( QEUpdate_Status_Label, 100 );
+
    Options_Sizer.Add( QEOverride_Sizer );
+   Options_Sizer.Add( QEUpdate_Sizer );
 
    Options_Control.SetSizer( Options_Sizer );
 
@@ -555,6 +594,169 @@ void NukeXInterface::e_SuppressRating( Button& /*sender*/, bool checked )
 {
    if ( TheNukeXProcess != nullptr )
       TheNukeXProcess->set_rating_popup_suppressed( checked );
+}
+
+// ----------------------------------------------------------------------------
+// Camera-database updater
+// ----------------------------------------------------------------------------
+
+namespace
+{
+
+// Published alongside the PixInsight repository. HTTPS only; QEFetcher
+// forces TLS with peer and host verification, and the payload carries its
+// own Ed25519 signature besides.
+const char* kQEUpdateBaseURL =
+   "https://raw.githubusercontent.com/scarter4work/nukex5/main/repository";
+
+std::string QEUserDataDir()
+{
+   const char* home = std::getenv( "HOME" );
+   return ( home ? std::string( home ) + "/.config" : std::string( "/tmp" ) )
+          + "/nukex4";
+}
+
+std::string QEStatePath()    { return QEUserDataDir() + "/qe_update_state.json"; }
+std::string QEDatabasePath() { return QEUserDataDir() + "/qe_database.json"; }
+
+} // anonymous namespace
+
+void NukeXInterface::UpdateDatabaseStatusLabel()
+{
+   if ( GUI == nullptr )
+      return;
+
+   const nukex::QEUpdateState st = nukex::load_update_state( QEStatePath() );
+   GUI->QEUpdate_CheckBox.SetChecked( st.enabled );
+
+   String text;
+   if ( st.installed_db_version > 0 )
+      text = String().Format( "database v%d", st.installed_db_version );
+   else
+      text = "shipped database";
+   GUI->QEUpdate_Status_Label.SetText( text );
+}
+
+void NukeXInterface::e_QEUpdateToggled( Button& sender, bool checked )
+{
+   if ( sender == GUI->QEUpdate_CheckBox )
+   {
+      nukex::QEUpdateState st = nukex::load_update_state( QEStatePath() );
+      st.enabled = checked;
+      nukex::save_update_state( QEStatePath(), st );
+   }
+}
+
+void NukeXInterface::e_QEUpdateCheck( Button& sender, bool /*checked*/ )
+{
+   if ( sender == GUI->QEUpdate_Check_Button )
+      CheckForDatabaseUpdate( true );
+}
+
+void NukeXInterface::CheckForDatabaseUpdate( bool user_initiated )
+{
+   nukex::QEUpdateState st = nukex::load_update_state( QEStatePath() );
+
+   const long long now = static_cast<long long>( std::time( nullptr ) );
+   if ( !user_initiated && !nukex::should_check_now( st, now ) )
+      return;
+
+   QEFetcher fetcher;
+   nukex::QEUpdater updater( fetcher, kQEUpdateBaseURL,
+                             nukex::qe_signing_public_key() );
+
+   const nukex::CheckResult r = updater.check( st.installed_db_version );
+
+   // Record the attempt whatever happened, so a broken endpoint cannot turn
+   // every interface open into a network round trip.
+   st.last_check_unix = now;
+   st.last_result     = nukex::to_string( r.outcome );
+   nukex::save_update_state( QEStatePath(), st );
+
+   switch ( r.outcome )
+   {
+   case nukex::UpdateOutcome::AVAILABLE:
+      break;   // handled below
+
+   case nukex::UpdateOutcome::UP_TO_DATE:
+      if ( user_initiated )
+         MessageBox( "The camera database is up to date.", "NukeX",
+                     StdIcon::Information, StdButton::Ok ).Execute();
+      return;
+
+   case nukex::UpdateOutcome::OFFLINE:
+      // Silent unless the user asked: a telescope laptop with no network is
+      // the normal case, not a condition worth interrupting anyone over.
+      if ( user_initiated )
+         MessageBox( "Could not reach the camera database server.\n"
+                     "This is not a problem -- the installed database is still in use.",
+                     "NukeX", StdIcon::Information, StdButton::Ok ).Execute();
+      return;
+
+   case nukex::UpdateOutcome::BAD_SIGNATURE:
+   case nukex::UpdateOutcome::DIGEST_MISMATCH:
+      // Loud even when nobody asked. This is possible tampering, not a
+      // network hiccup, and it must never be retried silently.
+      Console().WarningLn(
+         "<end><cbr>** NukeX: camera database update REJECTED -- " +
+         String( nukex::to_string( r.outcome ) ) +
+         ". The installed database is unchanged. If this repeats, do not "
+         "install the update and report it." );
+      return;
+
+   case nukex::UpdateOutcome::SCHEMA_TOO_NEW:
+      Console().WarningLn(
+         "<end><cbr>** NukeX: the published camera database needs a newer "
+         "version of NukeX. Update the module to receive it." );
+      return;
+
+   default:
+      if ( user_initiated )
+         MessageBox( String( "Camera database check: " ) +
+                     nukex::to_string( r.outcome ), "NukeX",
+                     StdIcon::Information, StdButton::Ok ).Execute();
+      return;
+   }
+
+   // AVAILABLE. Respect a version the user already declined, unless they
+   // asked for this check themselves.
+   if ( !user_initiated && r.manifest.db_version == st.declined_version )
+      return;
+
+   String prompt = String().Format(
+         "A newer camera database is available (v%d).\n\n", r.manifest.db_version );
+   prompt += String().Format( "%d cameras across %d sensors.\n",
+                              r.manifest.n_cameras, r.manifest.n_sensors );
+   if ( !r.manifest.summary.empty() )
+      prompt += String( r.manifest.summary.c_str() ) + "\n";
+   prompt += "\nInstall it now?";
+
+   if ( MessageBox( prompt, "NukeX", StdIcon::Question,
+                    StdButton::Yes, StdButton::No ).Execute() != StdButton::Yes )
+   {
+      st.declined_version = r.manifest.db_version;
+      nukex::save_update_state( QEStatePath(), st );
+      return;
+   }
+
+   const nukex::UpdateOutcome out = updater.install( r.manifest, QEDatabasePath() );
+   if ( out == nukex::UpdateOutcome::INSTALLED )
+   {
+      st.installed_db_version = r.manifest.db_version;
+      st.declined_version     = 0;
+      st.last_result          = nukex::to_string( out );
+      nukex::save_update_state( QEStatePath(), st );
+      UpdateDatabaseStatusLabel();
+      Console().NoteLn( String().Format(
+         "<end><cbr>* NukeX: camera database updated to v%d.", r.manifest.db_version ) );
+   }
+   else
+   {
+      Console().WarningLn(
+         "<end><cbr>** NukeX: camera database update failed -- " +
+         String( nukex::to_string( out ) ) +
+         ". The installed database is unchanged." );
+   }
 }
 
 } // namespace pcl

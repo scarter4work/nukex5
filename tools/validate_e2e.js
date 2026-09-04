@@ -8,7 +8,8 @@
 //   1. Verifies executeGlobal() succeeded.
 //   2. Verifies wall-time is within the case's budget.
 //   3. Verifies all frames aligned (≥ min_frames_ok_alignment).
-//   4. Saves stacked + noise + stretched FITS outputs to <output_root>/<case>/primary/
+//   4. Saves stacked + noise + stretched + composed FITS outputs to
+//      <output_root>/<case>/primary/
 //      (shell side computes SHA-256 and compares against goldens).
 //   5. Runs each dropdown_sweep variant and saves its stretched output to
 //      <output_root>/<case>/sweep_<label>/.  Shell side checks the stretched
@@ -26,7 +27,11 @@ function parseArgs() {
       regen: false,
       out_override: "",
       log: "/tmp/nukex_e2e_console.log",
-      meta: "/tmp/nukex_e2e_meta.txt"
+      meta: "/tmp/nukex_e2e_meta.txt",
+      // Run a single case by name. The full corpus takes hours; being able
+      // to regenerate or re-verify one case keeps a long run from being
+      // all-or-nothing, and makes an interrupted session cheap to resume.
+      only: ""
    };
    if (typeof jsArguments === "undefined") return out;
    for (var i = 0; i < jsArguments.length; i++) {
@@ -40,6 +45,7 @@ function parseArgs() {
       else if (k === "out")      out.out_override = v;
       else if (k === "log")      out.log = v;
       else if (k === "meta")     out.meta = v;
+      else if (k === "only")     out.only = v;
    }
    return out;
 }
@@ -71,12 +77,34 @@ function ensureDir(path) {
    }
 }
 
-function collectLights(dir) {
-   var pats = ["*.fit", "*.fits", "*.FIT", "*.FITS"];
+// NukeX's frame cache exists to keep frame data OUT of RAM. This used to be
+// hardcoded to "/tmp", which on Fedora is tmpfs -- so the "disk" cache was
+// RAM, competing with the process it was meant to relieve. A 24 MP OSC
+// corpus then OOM-killed the run at frame 17/33. Manifests set cache_dir to
+// real disk; the default below is real disk too.
+function cacheDir(manifest) {
+   var d = (manifest && manifest.cache_dir) ? manifest.cache_dir
+                                            : File.homeDirectory + "/.cache/nukex_e2e_frames";
+   ensureDir(d);
+   return d;
+}
+
+function collectLights(dir, glob, max_frames) {
+   var pats = glob ? [glob] : ["*.fit", "*.fits", "*.FIT", "*.FITS"];
    var all = [];
    for (var i = 0; i < pats.length; i++) {
       var found = searchDirectory(dir + "/" + pats[i], false);
       for (var j = 0; j < found.length; j++) all.push(found[j]);
+   }
+   // Sort ONLY when a subset is requested.  "The first N of M" has no
+   // meaning without a defined order, and searchDirectory's order is
+   // filesystem-dependent.  Cases that consume the whole directory keep
+   // the legacy unsorted order deliberately: sorting them would reshuffle
+   // the frame sequence, move the alignment reference, and so break the
+   // bit-identical v4.0.1.0 golden that lrgb_mono_ngc7635 exists to defend.
+   if (max_frames && all.length > max_frames) {
+      all.sort();
+      all = all.slice(0, max_frames);
    }
    return all;
 }
@@ -142,8 +170,8 @@ function closeAllNukexWindows() {
    }
 }
 
-function runPrimary(tc, out_dir) {
-   var lights = collectLights(tc.light_dir);
+function runPrimary(tc, out_dir, manifest) {
+   var lights = collectLights(tc.light_dir, tc.light_glob, tc.max_frames);
    if (lights.length === 0)
       return { status: "fail", reason: "no FITS in " + tc.light_dir };
    Console.writeln("[" + tc.name + "] " + lights.length + " light frames");
@@ -156,7 +184,7 @@ function runPrimary(tc, out_dir) {
    P.primaryStretch = tc.primary_stretch;
    P.finishingStretch = tc.finishing_stretch;
    P.enableGPU = true;
-   P.cacheDirectory = "/tmp";
+   P.cacheDirectory = cacheDir(manifest);
 
    closeAllNukexWindows();
 
@@ -183,7 +211,7 @@ function runPrimary(tc, out_dir) {
    ensureDir(out_dir);
    var saved = {};
    var hashes = {};
-   var tags = ["stacked", "noise", "stretched"];
+   var tags = ["stacked", "noise", "stretched", "composed"];
    for (var t = 0; t < tags.length; t++) {
       var w = findWindow("NukeX_" + tags[t]);
       if (w) {
@@ -206,8 +234,8 @@ function runPrimary(tc, out_dir) {
    };
 }
 
-function runSweepVariant(tc, variant, out_dir) {
-   var lights = collectLights(tc.light_dir);
+function runSweepVariant(tc, variant, out_dir, manifest) {
+   var lights = collectLights(tc.light_dir, tc.light_glob, tc.max_frames);
    if (lights.length === 0)
       return { status: "fail", reason: "no FITS" };
 
@@ -219,7 +247,7 @@ function runSweepVariant(tc, variant, out_dir) {
    P.primaryStretch = variant.primary_stretch;
    P.finishingStretch = tc.finishing_stretch;
    P.enableGPU = true;
-   P.cacheDirectory = "/tmp";
+   P.cacheDirectory = cacheDir(manifest);
 
    closeAllNukexWindows();
 
@@ -252,6 +280,7 @@ function collectPrimaryHashes(primary) {
       if (primary.pixel_hashes.stacked)   out.stacked   = primary.pixel_hashes.stacked.fnv1a_hex;
       if (primary.pixel_hashes.noise)     out.noise     = primary.pixel_hashes.noise.fnv1a_hex;
       if (primary.pixel_hashes.stretched) out.stretched = primary.pixel_hashes.stretched.fnv1a_hex;
+      if (primary.pixel_hashes.composed)  out.composed  = primary.pixel_hashes.composed.fnv1a_hex;
    }
    return out;
 }
@@ -261,7 +290,7 @@ function runCase(tc, manifest, out_root, regen, golden_dir) {
    ensureDir(out_dir);
 
    // Check 1-4: primary run
-   var primary = runPrimary(tc, out_dir + "/primary");
+   var primary = runPrimary(tc, out_dir + "/primary", manifest);
    var checks = { execute_ok: primary.status === "ok" };
 
    if (primary.status !== "ok") {
@@ -293,7 +322,7 @@ function runCase(tc, manifest, out_root, regen, golden_dir) {
       for (var i = 0; i < tc.dropdown_sweep.length; i++) {
          var v = tc.dropdown_sweep[i];
          var sdir = out_dir + "/sweep_" + v.label;
-         var r = runSweepVariant(tc, v, sdir);
+         var r = runSweepVariant(tc, v, sdir, manifest);
          r.label = v.label;
          sweep_results.push(r);
       }
@@ -338,8 +367,15 @@ function runCase(tc, manifest, out_root, regen, golden_dir) {
          current_sweep[sr.label] = { stretched: sr.pixel_hashes.stretched.fnv1a_hex };
    }
 
+   // A frozen golden is the regression floor.  regen must never rewrite it:
+   // its entire value is being a fixed reference that later work is measured
+   // against, so "the L-only path did not move" stays a provable claim
+   // rather than one resting on remembering to `git checkout` after a regen.
+   // It still VERIFIES under regen -- refusing to rewrite is not a reason to
+   // stop checking, and this way every regen re-proves the floor for free.
+   var frozen = tc.golden_frozen === true;
    var golden_check = { checked: false };
-   if (regen) {
+   if (regen && !frozen) {
       ensureDir(golden_dir);
       File.writeTextFile(golden_path,
          JSON.stringify({ primary: current_primary, sweep: current_sweep }) + "\n");
@@ -348,11 +384,18 @@ function runCase(tc, manifest, out_root, regen, golden_dir) {
       var g = readJson(golden_path);
       var match = true;
       var diffs = {};
-      // Primary hashes
-      for (var k in current_primary) {
-         var got = current_primary[k];
-         var want = g.primary ? g.primary[k] : undefined;
-         if (got !== want) { match = false; diffs["primary." + k] = { got: got, want: want }; }
+      // Primary hashes — iterate the GOLDEN's keys, not the run's, for
+      // the same reason the sweep loop below does: a hash the run newly
+      // produces (e.g. "composed", added in v5) is new coverage, not a
+      // regression, and must not fail a golden recorded before it existed.
+      // A key in the golden but missing from the run still fails, because
+      // `got` comes back undefined — that direction IS a regression.
+      if (g.primary) {
+         for (var k in g.primary) {
+            var want = g.primary[k];
+            var got  = current_primary[k];
+            if (got !== want) { match = false; diffs["primary." + k] = { got: got, want: want }; }
+         }
       }
       // Sweep hashes — only check labels that are PRESENT in the golden.
       // Labels in the run but not in the golden don't count as regressions
@@ -368,7 +411,8 @@ function runCase(tc, manifest, out_root, regen, golden_dir) {
             }
          }
       }
-      golden_check = { checked: true, match: match, diffs: diffs, path: golden_path };
+      golden_check = { checked: true, match: match, diffs: diffs,
+                       frozen: frozen, path: golden_path };
       checks.golden_match = match;
    } else {
       // No golden present — degrade gracefully, flag but don't fail
@@ -418,6 +462,10 @@ function runMain(args) {
    var overall_pass = true;
    for (var i = 0; i < manifest.cases.length; i++) {
       var tc = manifest.cases[i];
+      if (args.only && tc.name !== args.only) {
+         results.push({ name: tc.name, status: "skip", reason: "not selected by only=" });
+         continue;
+      }
       if (tc.skip) {
          Console.writeln("SKIP: " + tc.name + " — " + (tc.skip_reason || ""));
          results.push({ name: tc.name, status: "skip", reason: tc.skip_reason });

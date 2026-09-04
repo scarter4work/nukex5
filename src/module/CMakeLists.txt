@@ -17,6 +17,7 @@ set(MODULE_SOURCES
     NukeXInterface.cpp
     NukeXParameters.cpp
     NukeXProgress.cpp
+    QEFetcher.cpp
     RatingDialog.cpp
     stretch_auto_selector.cpp
     stretch_factory.cpp
