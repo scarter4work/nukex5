@@ -64,6 +64,13 @@ public:
     // installed_db_version. Writes nothing, and never fetches the database.
     CheckResult check(int installed_db_version) const;
 
+    // Fetches the database named by `manifest`, verifies its signature AND
+    // its digest against the manifest, then replaces dest_path atomically.
+    // Writes nothing at all unless every check passes, so a failure always
+    // leaves whatever was already installed byte-for-byte intact.
+    UpdateOutcome install(const QEManifest& manifest,
+                          const std::string& dest_path) const;
+
 private:
     Fetcher&             fetcher_;
     std::string          base_url_;

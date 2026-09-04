@@ -3,6 +3,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+
 #include <utility>
 #include <vector>
 
@@ -144,6 +150,56 @@ CheckResult QEUpdater::check(int installed_db_version) const {
     result.outcome  = UpdateOutcome::AVAILABLE;
     result.manifest = m;
     return result;
+}
+
+UpdateOutcome QEUpdater::install(const QEManifest& manifest,
+                                 const std::string& dest_path) const {
+    namespace fs = std::filesystem;
+
+    const std::string url = base_url_ + "/qe_database.json";
+    const FetchResult body = fetcher_.get(url);
+    if (!body.ok) return UpdateOutcome::OFFLINE;
+    const FetchResult sig = fetcher_.get(url + ".sig");
+    if (!sig.ok) return UpdateOutcome::OFFLINE;
+
+    if (!verify_body(body.body, sig.body, public_key_))
+        return UpdateOutcome::BAD_SIGNATURE;
+
+    // Not redundant with the signature: this is what stops a different but
+    // validly signed database being substituted for the one the (already
+    // verified) manifest describes.
+    const std::string got = sha512_hex(
+        reinterpret_cast<const unsigned char*>(body.body.data()), body.body.size());
+    std::string want = manifest.db_sha512;
+    std::transform(want.begin(), want.end(), want.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (got != want) return UpdateOutcome::DIGEST_MISMATCH;
+
+    std::error_code ec;
+    const fs::path dest(dest_path);
+    if (dest.has_parent_path()) {
+        fs::create_directories(dest.parent_path(), ec);
+        if (ec) return UpdateOutcome::INSTALL_FAILED;
+    }
+
+    // The scratch file sits beside the destination, never in /tmp, so the
+    // rename stays within one filesystem and is therefore atomic. An
+    // interrupted install cannot leave a truncated database behind.
+    const fs::path tmp = dest_path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return UpdateOutcome::INSTALL_FAILED;
+        out.write(body.body.data(), static_cast<std::streamsize>(body.body.size()));
+        out.flush();
+        if (!out) { fs::remove(tmp, ec); return UpdateOutcome::INSTALL_FAILED; }
+    }
+
+    fs::rename(tmp, dest, ec);
+    if (ec) {
+        fs::remove(tmp, ec);
+        return UpdateOutcome::INSTALL_FAILED;
+    }
+    return UpdateOutcome::INSTALLED;
 }
 
 } // namespace nukex
