@@ -114,3 +114,29 @@ TEST_CASE("FilterClassifier: broadband LPR names on mono resolve to BROADBAND_L 
         REQUIRE(c.last_warning().empty());
     }
 }
+
+TEST_CASE("FilterClassifier: L-Quad Enhance resolves to the three-line canonical",
+          "[filter_classifier]") {
+    // Reported from a real stack, 2026-09-04: 53 Bayer frames with
+    // FILTER='Lqef' stopped the batch at start. The QE data shipped all along,
+    // as Optolong-L-Quad-Enhance, but the classifier had no spelling that
+    // reached it -- the filter covers Ha, OIII and SII, and until now only
+    // two-line sets had canonical names.
+    FilterClassifier c;
+    for (const char* spelling : { "Lqef", "L-QEF", "LQEF", "L-Quad", "L Quad Enhance",
+                                  "Optolong L-Quad Enhance", "HaO3S2", "HaOIIISII" }) {
+        INFO("FILTER = " << spelling);
+        Filter f = c.classify(make_meta(spelling, "RGGB"));
+        REQUIRE(f.cls == FilterClass::DUAL_NB_OSC);
+        REQUIRE(f.name == "HaO3S2");
+    }
+}
+
+TEST_CASE("FilterClassifier: a three-line filter on mono is still narrowband, not luminance",
+          "[filter_classifier]") {
+    // The broadband-on-mono fallback must not swallow it: this is a real
+    // multi-line filter, not an unrecognised name to treat as luminance.
+    FilterClassifier c;
+    Filter f = c.classify(make_meta("Lqef"));
+    REQUIRE(f.name == "HaO3S2");
+}

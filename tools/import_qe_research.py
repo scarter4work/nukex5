@@ -39,7 +39,17 @@ LINE_TOL_NM = 4.0
 
 # Canonical dual-NB keys emitted by FilterClassifier::known_table(), by the
 # set of Q-solve lines their passes cover.
-CANONICAL_DUAL = {frozenset(("Ha", "OIII")): "HaO3", frozenset(("SII", "OIII")): "S2O3"}
+# A quad-band filter such as Optolong's L-Quad Enhance passes Hb as well, but
+# Hb is not a Q-solve line, so what it contributes is the three-line set. That
+# set is exactly determined on an RGB sensor -- three unknowns from three
+# photosites -- and had no canonical name until 2026-09-04, which meant the
+# classifier could not reach it and the batch stopped at start even though the
+# QE data shipped.
+CANONICAL_DUAL = {
+    frozenset(("Ha", "OIII")):        "HaO3",
+    frozenset(("SII", "OIII")):       "S2O3",
+    frozenset(("Ha", "OIII", "SII")): "HaO3S2",
+}
 
 # Product entries that FilterClassifier maps to their own canonical name.
 PRODUCT_CANONICAL = {
@@ -119,11 +129,18 @@ def transform_filters(filters):
         out[name] = {"type": ftype, "lines": lines}
 
         q_lines = q_solve_lines(lines)
-        if f.get("type") == "dual-narrowband":   # tri/quad products carry extra passes; keep them out of the medians
-            key = CANONICAL_DUAL.get(frozenset(l["name"] for l in q_lines))
-            if key:
-                dual_sources.setdefault(key, []).append(q_lines)
-        elif ftype == "NARROWBAND" and len(q_lines) == 1:
+        key = CANONICAL_DUAL.get(frozenset(l["name"] for l in q_lines))
+        # Two-line canonicals are built from dual-band products only: a quad
+        # filter's Ha pass is a different piece of glass from a dual's, and
+        # averaging their FWHMs together would describe neither. A three-line
+        # canonical is the opposite case -- only a tri- or quad-band product
+        # can cover all three Q-solve lines, so those products are its only
+        # possible source, and excluding them left the set with no canonical
+        # name at all. That is what stopped an L-Quad Enhance batch at start
+        # while its measured QE sat in the database, unreachable.
+        if key and (f.get("type") == "dual-narrowband" or len(q_lines) == 3):
+            dual_sources.setdefault(key, []).append(q_lines)
+        if ftype == "NARROWBAND" and len(q_lines) == 1:
             single_sources.setdefault(q_lines[0]["name"], []).append(q_lines)
 
         if name in PRODUCT_CANONICAL:

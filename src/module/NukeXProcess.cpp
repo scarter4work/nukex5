@@ -1,6 +1,7 @@
 // NukeX v4 — Distribution-Fitted Stacking for PixInsight
 // Copyright (c) 2026 Scott Carter. MIT License.
 
+#include "NukeXVersion.h"
 #include "NukeXProcess.h"
 #include "NukeXParameters.h"
 #include <pcl/ErrorHandler.h>
@@ -65,7 +66,7 @@ String NukeXProcess::Description() const
 {
    return
       "<html>"
-      "<p><b>NukeX v4</b> &mdash; Distribution-Fitted Stacking</p>"
+      "<p><b>NukeX " NUKEX_VERSION_STRING "</b> &mdash; Distribution-Fitted Stacking</p>"
       "<p>NukeX integrates subframes using per-pixel distribution fitting "
       "(Student-t, Gaussian Mixture, Contamination, KDE) to determine the "
       "optimal output value for each pixel. Unlike averaging or sigma-clipping, "

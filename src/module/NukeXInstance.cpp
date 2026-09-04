@@ -447,7 +447,7 @@ bool NukeXInstance::CanExecuteGlobal( String& whyNot ) const
 bool NukeXInstance::ExecuteGlobal()
 {
    NukeXProgress progress;
-   progress.message( "NukeX v4 \xe2\x80\x94 Distribution-Fitted Stacking" );
+   progress.message( "NukeX " NUKEX_VERSION_STRING " -- Distribution-Fitted Stacking" );
    progress.message( String().Format( "Processing %zu light frame(s)", lightFrames.Length() ).ToUTF8().c_str() );
 
    // Collect enabled file paths
@@ -504,17 +504,28 @@ bool NukeXInstance::ExecuteGlobal()
       return false;
    }
 
-   // QE database load failed — typically because Task 16 hasn't shipped
-   // share/qe_database.json yet, or qeOverridePath points at a malformed
-   // file. Surface it loudly so the user can act on it.
+   // The engine refused the batch. It says why, and the message is written to
+   // be acted on, so the job here is only to add the install hint when the
+   // install is genuinely the problem.
+   //
+   // This used to append "share/qe_database.json is missing from the plugin
+   // install" to EVERY failure. A user whose filter simply was not in the
+   // database -- one line after the console announced updating that same
+   // database -- was told to go and check their installation. Decide it from
+   // the file rather than guessing.
    if ( !result.ok )
    {
-      progress.message( String().Format(
-         "** QE database error: %s\n"
-         "** This usually means share/qe_database.json is missing from the "
-         "plugin install (the release package was not fully installed) or the qe_overrides.json file "
-         "is malformed. Color-science Phase B cannot run without a QE database.",
-         result.error.c_str() ).ToUTF8().c_str() );
+      const std::string db_path = ResolveQEDatabasePath();
+      const bool db_present = std::filesystem::exists( db_path );
+
+      String msg = String().Format( "** %s", result.error.c_str() );
+      if ( !db_present )
+         msg += String().Format(
+            "\n** The quantum-efficiency database is not where NukeX expects it "
+            "(%s). The release package was not fully installed -- re-install "
+            "NukeX from its repository, or point the QE override file at a copy.",
+            db_path.c_str() );
+      progress.message( msg.ToUTF8().c_str() );
       return false;
    }
 
@@ -895,7 +906,7 @@ bool NukeXInstance::ExecuteGlobal()
       progress.message( "Noise map opened." );
    }
 
-   progress.message( "NukeX v4 done." );
+   progress.message( "NukeX done." );
    return true;
 }
 
