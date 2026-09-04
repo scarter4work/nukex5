@@ -87,8 +87,19 @@ TEST_CASE("Phase A: missing FILTER on Bayer is silent BROADBAND_OSC",
     REQUIRE(result.cube->channel_config.slot_index("L") != -1);
 }
 
-TEST_CASE("Phase A: mixed L + HaO3 batch builds union slot config",
+TEST_CASE("Phase A: a mono L + Bayer HaO3 batch is refused, not silently mixed",
           "[integration][phase_a]") {
+    // This case used to assert only that the slot union came out as
+    // {L, R_HaO3, G_HaO3, B_HaO3} -- which it did, while the pixels behind
+    // those slots were never right. The batch-level Bayer pattern comes from
+    // the first frame, so with a mono frame first the HaO3 frame is never
+    // debayered, and Phase B reads three channels out of a one-channel cache
+    // that every frame shares. Asserting the slot names passed a
+    // configuration that cannot produce correct output.
+    //
+    // Same root cause as the LRGB-mono case (test_lrgb_mono.cpp): FrameCache
+    // is keyed on geometry, so Phase B cannot separate one slot's frames from
+    // another's. Until that is fixed the batch is refused.
     auto t1 = fs::temp_directory_path() / "phase_a_l.fits";
     auto t2 = fs::temp_directory_path() / "phase_a_hao3_2.fits";
     test_util::write_synthetic_mono(t1.string(), 16, 16, "ASI2600MM", "L", 0.5f);
@@ -99,11 +110,9 @@ TEST_CASE("Phase A: mixed L + HaO3 batch builds union slot config",
     StackingEngine engine(cfg);
     auto result = engine.execute({t1.string(), t2.string()}, {}, nullptr);
 
-    REQUIRE(result.ok);
-    REQUIRE(result.cube->channel_config.slot_index("L")      != -1);
-    REQUIRE(result.cube->channel_config.slot_index("R_HaO3") != -1);
-    REQUIRE(result.cube->channel_config.slot_index("G_HaO3") != -1);
-    REQUIRE(result.cube->channel_config.slot_index("B_HaO3") != -1);
+    REQUIRE_FALSE(result.ok);
+    INFO("error: " << result.error);
+    REQUIRE(result.error.find("separately") != std::string::npos);
 }
 
 TEST_CASE("Phase A: missing FILTER on mono (L_unnamed) routes into the L slot",

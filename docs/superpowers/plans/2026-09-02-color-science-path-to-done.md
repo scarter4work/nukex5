@@ -2470,6 +2470,48 @@ type: project
 ## Environment
 - Fedora 44 / GCC 16.2.1 / glog 0.7.1: stale build dirs from before the OS upgrade fail on libglog.so.0 — clean rebuild.
 
+## Outcome, 2026-09-04
+
+Tasks 21 and 22 completed differently from the plan, because running the new
+corpora on a cube that finally fit in RAM exposed three defects the plan did
+not know about. All three were root-caused with measurements, not guessed.
+
+**Task 21 — E2E.** Three of four cases are green.
+
+| case | outcome |
+|---|---|
+| `lrgb_mono_ngc7635` | verified bit-identical against the frozen golden; `golden_frozen` stays true |
+| `bayer_rgb_m27_2023` | golden recorded, 33 of 33 frames aligned |
+| `bayer_nb_hao3_m16` | golden recorded, 12 of 12 frames aligned |
+| `mono_lrgb_m27_2025` | `skip: true` — the engine refuses multi-filter mono batches |
+
+The harness was also fixed to honour each case's `min_frames_ok_alignment`,
+which every case declared and the code ignored in favour of demanding zero
+failures.
+
+**Task 22 — visual validation.** The M27 LRGB-mono row is struck: there is no
+v5 image to judge, because the configuration is refused. M16 HaO3 and M27 OSC
+proceed as written.
+
+**Defects found and their disposition.**
+
+1. *Heap corruption on a mixed-filter batch* — fixed (`6df32dd`). The cube was
+   allocated from the first frame and its channel config grown underneath it;
+   that only ever worked because the voxel over-provisioned MAX_CHANNELS. The
+   slot union is now settled before allocation.
+2. *LRGB-mono produces one populated channel of four* — contained, not fixed.
+   FrameCache is keyed on geometry so all mono filters share one cache, and
+   Phase B assumes every channel has the same frame set. The engine refuses
+   such batches; un-refusing them is the next task.
+3. *M27 2025 aligns 51 of 72 even after reference selection* — diagnosed as
+   cumulative drift at the two temporal ends of a seven-hour session. Needs
+   chained or multi-reference alignment.
+
+Also worth noting for whoever picks this up: both integration test binaries
+were tagged `[.integration]`, which Catch2 hides, so ctest had never run a
+single case in either. That is why a heap corruption survived a green suite.
+They are un-gated and cost 0.8 s together.
+
 ## Open follow-ups (each needs a decision, per no-stub-tickets)
 - S2O3 and LRGBSHO corpora: none on disk; E2E placeholders skip.
 - Per-camera Q dispatch for mixed-camera dual-NB batches: engine loud-fails today.
