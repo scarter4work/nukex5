@@ -190,3 +190,82 @@ TEST_CASE("StarMatcher: recovers correspondences under rotation + translation",
     // jitter, but the vast majority must be correct.
     REQUIRE(correct >= static_cast<int>(matches.size() * 0.9f));
 }
+
+// --- channel-aware warp --------------------------------------------------
+
+#include "nukex/alignment/channel_registration.hpp"
+
+TEST_CASE("warp with channel transforms brings a displaced channel into "
+          "register", "[homography]") {
+    // Red drawn 1.5 px right of green. A channel transform of exactly that
+    // must pull it back on top.
+    nukex::Image src(200, 200, 3);
+    src.fill(0.0f);
+
+    auto blob = [&](int ch, double cx, double cy) {
+        for (int dy = -6; dy <= 6; dy++)
+            for (int dx = -6; dx <= 6; dx++) {
+                int px = int(std::lround(cx)) + dx;
+                int py = int(std::lround(cy)) + dy;
+                if (px < 0 || px >= 200 || py < 0 || py >= 200) continue;
+                double ex = px - cx, ey = py - cy;
+                src.at(px, py, ch) += float(0.5 * std::exp(-(ex*ex + ey*ey) / 5.12));
+            }
+    };
+    blob(1, 100.0, 100.0);   // green
+    blob(0, 101.5, 100.0);   // red, displaced
+
+    nukex::ChannelTransforms ct;
+    ct.cx = 99.5; ct.cy = 99.5;
+    ct.reference_channel = 1;
+    ct.per_channel.resize(3);
+    ct.per_channel[0].s  = 1.0;
+    ct.per_channel[0].tx = 1.5;         // where red images a green position
+    ct.per_channel[0].fit = nukex::ChannelTransform::Fit::TranslationOnly;
+
+    nukex::Image out = nukex::HomographyComputer::warp(
+        src, nukex::HomographyMatrix::identity(), 200, 200, ct);
+
+    // Centre of mass of each channel in a box around the green position.
+    auto com_x = [&](const nukex::Image& im, int ch) {
+        double w = 0, wx = 0;
+        for (int y = 90; y < 110; y++)
+            for (int x = 90; x < 112; x++) {
+                double v = im.at(x, y, ch);
+                if (v <= 0) continue;
+                w += v; wx += v * x;
+            }
+        return wx / w;
+    };
+
+    // Before: red sits 1.5 px away. After: within a twentieth of a pixel.
+    REQUIRE(std::abs(com_x(src, 0) - com_x(src, 1)) > 1.4);
+    REQUIRE(std::abs(com_x(out, 0) - com_x(out, 1)) < 0.05);
+
+    // Green must be untouched. It is the reference; resampling it would blur
+    // it for nothing, and the acceptance criterion checks its FWHM.
+    for (int y = 0; y < 200; y++)
+        for (int x = 0; x < 200; x++)
+            REQUIRE(out.at(x, y, 1) == Catch::Approx(src.at(x, y, 1)));
+}
+
+TEST_CASE("warp with empty channel transforms matches the old warp exactly",
+          "[homography]") {
+    nukex::Image src(64, 64, 3);
+    for (int c = 0; c < 3; c++)
+        for (int y = 0; y < 64; y++)
+            for (int x = 0; x < 64; x++)
+                src.at(x, y, c) = float((x * 7 + y * 13 + c * 29) % 251) / 251.0f;
+
+    nukex::HomographyMatrix H = nukex::HomographyMatrix::identity();
+    H(0, 2) = 2.5f;
+    H(1, 2) = -1.25f;
+
+    nukex::Image a = nukex::HomographyComputer::warp(src, H, 64, 64);
+    nukex::Image b = nukex::HomographyComputer::warp(src, H, 64, 64,
+                                                    nukex::ChannelTransforms{});
+
+    REQUIRE(a.data_size() == b.data_size());
+    for (size_t i = 0; i < a.data_size(); i++)
+        REQUIRE(a.data()[i] == b.data()[i]);
+}

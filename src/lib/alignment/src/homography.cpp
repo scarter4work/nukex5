@@ -305,7 +305,13 @@ AlignmentResult HomographyComputer::compute(
 }
 
 Image HomographyComputer::warp(const Image& source, const HomographyMatrix& H,
-                                int output_width, int output_height) {
+                               int output_width, int output_height) {
+    return warp(source, H, output_width, output_height, ChannelTransforms{});
+}
+
+Image HomographyComputer::warp(const Image& source, const HomographyMatrix& H,
+                               int output_width, int output_height,
+                               const ChannelTransforms& channels) {
     Image output(output_width, output_height, source.n_channels());
 
     // Compute inverse H for backward mapping
@@ -321,6 +327,11 @@ Image HomographyComputer::warp(const Image& source, const HomographyMatrix& H,
     int sh = source.height();
 
     for (int ch = 0; ch < source.n_channels(); ch++) {
+        const bool has_ct = ch < static_cast<int>(channels.per_channel.size());
+        const ChannelTransform ct =
+            has_ct ? channels.per_channel[ch] : ChannelTransform{};
+        const bool apply_ct = has_ct && !ct.is_identity();
+
         for (int y = 0; y < output_height; y++) {
             for (int x = 0; x < output_width; x++) {
                 // Map output (x, y) back to source coordinates
@@ -328,6 +339,8 @@ Image HomographyComputer::warp(const Image& source, const HomographyMatrix& H,
                 if (std::abs(w) < 1e-10f) continue;
                 float sx = (H_inv(0, 0) * x + H_inv(0, 1) * y + H_inv(0, 2)) / w;
                 float sy = (H_inv(1, 0) * x + H_inv(1, 1) * y + H_inv(1, 2)) / w;
+
+                if (apply_ct) ct.apply(channels.cx, channels.cy, sx, sy);
 
                 // Bilinear interpolation
                 if (!std::isfinite(sx) || !std::isfinite(sy)) continue;
