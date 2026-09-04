@@ -1,5 +1,25 @@
 # NukeX — Changelog
 
+## v5.0.0.1 — 2026-09-04
+
+Two defects found by an adversarial review of the v5.0.0.0 engine changes.
+Both are in batches that mix frame types; a batch of one kind is unaffected.
+
+### Fixed
+- **A batch mixing Bayer (CFA) frames with mono frames is refused.** The
+  Bayer pattern is taken from the batch's first frame, so the two orderings
+  were wrong in different directions. With a mono frame first the Bayer frame
+  was never demosaiced and the colour routing read image channels that did
+  not exist — an out-of-bounds read, and a crash on a real-sized frame. With
+  a Bayer frame first every mono frame was demosaiced as though it were a
+  mosaic, which produced no error at all and wrong pixels. Stack the two
+  groups separately.
+- **A frame the engine could not measure no longer terminates PixInsight.**
+  If a frame failed to read during the measurement pass but read
+  successfully afterwards, an internal consistency check called `abort()`,
+  which takes the whole application down with no chance to save. It now
+  fails the stack with an explanation.
+
 ## v5.0.0.0 — 2026-09-04
 
 Colour-science overhaul. NukeX now knows what filter and camera produced
