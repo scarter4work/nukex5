@@ -1,4 +1,137 @@
-# NukeX v4 — Changelog
+# NukeX — Changelog
+
+## v5.0.0.0 — 2026-09-04
+
+Colour-science overhaul. NukeX now knows what filter and camera produced
+each frame, decomposes dual-narrowband OSC data into its emission lines
+through the camera's measured quantum efficiency, and composes colour in
+Lab/LCH with a calibrated emission-line palette.
+
+**Read this before expecting different pixels.** The colour science is
+delivered in a NEW window, `NukeX_composed`. On dual-narrowband data the
+`NukeX_stacked` and `NukeX_stretched` windows are **bit-identical to
+v4.0.1.0** — measured on 12 M16 HaO3 frames, same hash for both. Phase A
+does route those frames into Ha/OIII slots rather than plain R/G/B, but the
+stacked pixel values are the same debayered channels in the same order, so
+the stack itself does not move. If you look only at the stretched window you
+will see exactly what v4 gave you. The emission-line colour is in the
+composed window, and that is the one to judge.
+
+### Added
+- Filter taxonomy: BROADBAND_L, BROADBAND_RGB, BROADBAND_OSC,
+  NARROWBAND_SINGLE, DUAL_NB_OSC, resolved from FITS FILTER / BAYERPAT /
+  INSTRUME with a tiered policy — an unknown dual-narrowband name on Bayer
+  data stops the batch loudly; an unknown mono name warns and stacks as
+  luminance.
+- Quantum-efficiency database (`share/qe_database.json`): 55 cameras plus a
+  generic Sony OSC fallback, and 96 filters including the canonical HaO3 /
+  S2O3 / L-eXtreme / L-eNhance / L-Ultimate / ALP-T entries. Camera keys
+  match INSTRUME case-insensitively and by model substring.
+- Runtime camera-database updater: signed manifest, Ed25519 verification
+  against a key embedded in the module, explicit consent before install, and
+  an atomic replace. Declining a version is remembered.
+- Phase B Q-matrix decomposition (Eigen QR) of dual-narrowband OSC stacks
+  into Ha / OIII / SII slots, with multi-source OIII merge across HaO3 and
+  S2O3 batches.
+- ColorComposer: Lab/LCH composite of the derived slots against a calibrated
+  emission-line palette with no green quadrant by construction. New
+  `NukeX_composed` window; `NUKEX_GAMUT_CLIPPED` and `NUKEX_QE_CONFIDENCE`
+  provenance keywords.
+- OSC-as-LRGB: a rec709 luminance slot synthesised per OSC frame.
+- "QE override file…" picker in the interface for cameras and filters the
+  database does not carry (`docs/qe_overrides_format.md`).
+- Broadband light-pollution filter names (L-Pro, LPS, UV-IR cut, CLS)
+  recognised as plain OSC on Bayer cameras.
+
+### Changed
+- **The voxel record is sized to the stack's real channel count.** Every
+  voxel used to carry seven per-channel arrays dimensioned at MAX_CHANNELS,
+  so an L-only stack provisioned eight channels and used one; 1376 of 1436
+  bytes per voxel were per-channel payload. Grouping those fields into one
+  VoxelChannel record and storing exactly as many as the stack has takes a
+  3-channel OSC voxel from 1436 bytes to 468. Two lossless packing changes
+  ride along: 16-bit histogram bins (a bin cannot exceed the frame count,
+  which was already uint16) and no interior padding in ZDistribution.
+
+  | corpus | before | after |
+  |---|---|---|
+  | L-only 8.3 MP | 11.9 GB | 1.6 GB |
+  | LRGB-mono 8.3 MP | 11.9 GB | 5.0 GB |
+  | OSC 24.5 MP | 35.2 GB | 11.5 GB |
+  | OSC 62 MP | 89.0 GB | 29.0 GB |
+
+  The 24.5 MP corpora now fit in RAM instead of running on swap. Measured on
+  the 33-frame M27 OSC set, Phase A went from 45 s/frame to 3.9 s/frame — the
+  whole phase from around 25 minutes to 128 seconds. Pixel output is
+  bit-identical; the frozen NGC7635 golden is unchanged by it.
+- **The alignment reference is checked before it is used.** A measurement
+  pass reads every frame before Phase A. The frame the aligner would have
+  taken anyway — the first one — is kept whenever it reaches 75% of the best
+  star count in the batch; only when it does not is it replaced, by the
+  sharpest frame that does. On an LRGB-mono set the per-filter star yield
+  varies enormously, so "whichever frame sorts first" was a coin flip: on
+  M27 2025 it landed on a blue frame with 32 stars against 200 elsewhere, and
+  71 of 72 frames aligned with zero inliers. That corpus now aligns 51 of 72.
+  Batches whose first frame is already viable are unaffected, deliberately:
+  moving the reference among equally good candidates was measured to cost
+  alignments (65 of 65 down to 59 of 65 on NGC7635) for no gain.
+- Rating DB `user_version` 1 → 2: stored filter classes migrate to the
+  5-class encoding on first open; pre-v5 narrowband ratings become
+  NARROWBAND_SINGLE.
+- Rating popup shows the colour axis for RGB-mono and OSC stacks.
+- E2E corpus: new OSC and dual-narrowband (M16 HaO3) baselines beside the
+  preserved NGC7635 floor, which still verifies bit-identical — stacked
+  `c2277834`, noise `b9ec9edd`, all three stretch sweeps — so nothing in this
+  release moved the L-only path. The LRGB-mono corpus is present but skipped;
+  see the mono-batch entry under Fixed. The harness now honours each case's
+  declared `min_frames_ok_alignment` instead of demanding zero failures.
+- Eigen is taken from the system (`find_package(Eigen3)`) rather than
+  vendored.
+
+### Fixed
+- **Multi-filter mono batches are refused instead of returning empty
+  channels.** A batch of separate L / R / G / B mono frames produced one
+  populated channel and three that were exactly zero — a solid-coloured
+  image. FrameCache is keyed on post-debayer geometry, so every mono frame
+  shares one cache whatever its filter, and Phase B cannot read a given
+  slot's own frames: one slot fits a mixture of all of them and the rest fit
+  zeros. Phase A routing was never wrong. Giving each slot its own frame set
+  reaches into the shadow buffers and weight kernels, which assume all
+  channels share one, so until that lands the engine stops the batch and says
+  to stack each mono filter separately. Single-filter mono batches are
+  unaffected.
+- **Heap corruption on a mixed-filter batch.** `ChannelConfig::merge` unions
+  slot names, so a batch whose later frames carry filters the first frame did
+  not needs more channels than the first frame implies. The cube was
+  allocated from the first frame and the config grown underneath it, which
+  only ever worked because the unused MAX_CHANNELS provisioning absorbed the
+  overflow. The slot union is now settled before allocation and checked
+  against it. A mono L frame followed by a Bayer HaO3 frame was enough to
+  trigger it.
+- Mono frames route by the slot the config registered rather than the raw
+  FILTER string, so a filter-wheel slot number no longer aborts the stack.
+- A voxel with fewer than three samples keeps the sample's robust location
+  instead of being zeroed.
+
+### Removed
+- `StackingMode` enum, `ChannelConfig::from_mode`, `output_rgb_mapping`,
+  `is_mono`.
+- Module-local `filter_classifier` and `fits_metadata`, superseded by
+  `lib/io`.
+
+### Known limitations
+- **A batch may carry only one mono filter.** Stack L, R, G and B separately
+  and combine the results. The engine says so rather than guessing; see the
+  mono-batch entry under Fixed.
+- **Very long sessions may lose frames at the ends.** Alignment is against a
+  single reference, so frames far from it in time can fail once tracking
+  drift accumulates. Measured on a seven-hour M27 set: everything within
+  about 90 minutes of the reference aligns, and 21 of 72 frames at the two
+  ends do not. Failed frames are stacked unwarped at half weight.
+- **A 24 MP colour stack needs more than 32 GB to stay out of swap.** The
+  voxel record is 11.5 GB, and Phase B stages a batch sized from GPU memory
+  in host RAM beside it. It completes on a 30 GB machine; it swaps while
+  doing so.
 
 ## v4.0.1.0 — 2026-04-25
 
