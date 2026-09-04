@@ -14,6 +14,7 @@
 // FilterClass enum is deleted, the pImpl can revert to a value
 // member and this include can move into the header.
 #include "nukex/io/filter_classifier.hpp"
+#include "nukex/io/filter_alias.hpp"
 #include "nukex/alignment/frame_aligner.hpp"
 #include "nukex/alignment/reference_selector.hpp"
 // TASK-14-COLLAPSE: same — pImpl-only include, can move to the
@@ -167,6 +168,20 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     ExecuteResult result;
     if (light_paths.empty()) return result;
 
+    // Names the user has taught NukeX. A missing file is the ordinary first
+    // run; a malformed one is reported and then ignored, so a hand-edited file
+    // cannot stop a stack.
+    if (!config_.filter_alias_path.empty()) {
+        FilterAliasStore aliases;
+        if (aliases.load(config_.filter_alias_path)) {
+            filter_classifier_->set_aliases(std::move(aliases));
+        } else {
+            obs.message("Could not read the filter-alias file at "
+                        + config_.filter_alias_path
+                        + "; continuing with the shipped filter names only.");
+        }
+    }
+
     // Surface a deferred QE-load failure from the constructor before
     // any per-frame work. ok=false here means the engine isn't usable
     // for this batch and the module/UI can show the error to the user.
@@ -197,6 +212,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     if (first_filter.cls == FilterClass::UNKNOWN && bayer != BayerPattern::NONE) {
         ExecuteResult err{};
         err.ok    = false;
+        err.unknown_filter = first_filter.name;
         err.error = "FILTER='" + first_filter.name + "' on Bayer frame not in QE DB. "
                     "Rename FILTER to a known spelling, or add the filter to a "
                     "qe_overrides.json file and select it with the QE override picker "
@@ -296,6 +312,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                 parse_bayer_pattern(rr.metadata.bayer_pattern) != BayerPattern::NONE;
             if (ff.cls == FilterClass::UNKNOWN && f_is_bayer) {
                 frame_quality[f].usable = false;
+                if (result.unknown_filter.empty()) result.unknown_filter = ff.name;
                 obs.advance(1, "  frame " + std::to_string(f + 1)
                                + ": unknown FILTER on Bayer -- will be skipped");
                 continue;

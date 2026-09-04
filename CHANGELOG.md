@@ -1,5 +1,24 @@
 # NukeX — Changelog
 
+## v5.0.1.0 — 2026-09-04
+
+### Added
+- **NukeX offers to learn a filter it does not recognise.** FITS `FILTER`
+  values are whatever the capture software wrote, so no shipped table can
+  list them all, and until now an unrecognised name on a colour camera just
+  stopped the batch. It now asks which emission lines the filter passes —
+  H-alpha, OIII, SII — records the answer in
+  `<user-data>/nukex4/filter_aliases.json`, and re-stacks. Once.
+
+  H-beta is not offered, and the dialog says why: at 486 nm it lands on the
+  same photosites as OIII, so a solve carrying both has no unique answer. For
+  the same reason Ha and SII without OIII is refused at the checkbox rather
+  than accepted and failed later.
+
+  The file is plain JSON you can read, edit or delete, keyed by the header
+  name reduced to lowercase alphanumerics. It is consulted after the shipped
+  table, so an entry can add a spelling but never redefine `Ha` or `HaO3`.
+
 ## v5.0.0.2 — 2026-09-04
 
 All four found in the first real user session on v5.0.0.1, on 53 Optolong

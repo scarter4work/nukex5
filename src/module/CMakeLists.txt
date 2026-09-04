@@ -19,6 +19,7 @@ set(MODULE_SOURCES
     NukeXProgress.cpp
     QEFetcher.cpp
     RatingDialog.cpp
+    FilterDialog.cpp
     stretch_auto_selector.cpp
     stretch_factory.cpp
 )

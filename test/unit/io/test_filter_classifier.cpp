@@ -1,5 +1,6 @@
 #include "catch_amalgamated.hpp"
 #include "nukex/io/filter_classifier.hpp"
+#include "nukex/io/filter_alias.hpp"
 #include "nukex/core/frame_metadata.hpp"
 
 using namespace nukex;
@@ -139,4 +140,45 @@ TEST_CASE("FilterClassifier: a three-line filter on mono is still narrowband, no
     FilterClassifier c;
     Filter f = c.classify(make_meta("Lqef"));
     REQUIRE(f.name == "HaO3S2");
+}
+
+TEST_CASE("FilterClassifier: a taught alias resolves a name the table does not know",
+          "[filter_classifier]") {
+    // The open-ended half of the problem: FITS FILTER values are whatever the
+    // capture software wrote, so no shipped table can list them all. When the
+    // interface learns one, the classifier must honour it.
+    FilterAliasStore aliases;
+    aliases.set("MyDuoBand", "HaO3");
+
+    FilterClassifier c;
+    REQUIRE(c.classify(make_meta("MyDuoBand", "RGGB")).cls == FilterClass::UNKNOWN);
+
+    c.set_aliases(aliases);
+    Filter f = c.classify(make_meta("MyDuoBand", "RGGB"));
+    REQUIRE(f.cls  == FilterClass::DUAL_NB_OSC);
+    REQUIRE(f.name == "HaO3");
+}
+
+TEST_CASE("FilterClassifier: an alias cannot shadow a shipped name",
+          "[filter_classifier]") {
+    // Consulted only after the built-in table, so a user file can add
+    // spellings but never redefine what Ha or HaO3 mean.
+    FilterAliasStore aliases;
+    aliases.set("Ha", "S2O3");
+
+    FilterClassifier c;
+    c.set_aliases(aliases);
+    Filter f = c.classify(make_meta("Ha"));
+    REQUIRE(f.name == "Ha");
+}
+
+TEST_CASE("FilterClassifier: an alias is matched on the normalised name",
+          "[filter_classifier]") {
+    FilterAliasStore aliases;
+    aliases.set("lqef", "HaO3S2");
+
+    FilterClassifier c;
+    c.set_aliases(aliases);
+    REQUIRE(c.classify(make_meta("L-QEF", "RGGB")).name == "HaO3S2");
+    REQUIRE(c.classify(make_meta("l qef", "RGGB")).name == "HaO3S2");
 }
