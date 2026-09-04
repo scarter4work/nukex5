@@ -165,3 +165,182 @@ TEST_CASE("negligible() is true only when every channel is near identity "
     CHECK_FALSE(ct.negligible(565.0, 0.01));
     CHECK(ct.negligible(50.0, 0.01));
 }
+
+// --- the fallback ladder -------------------------------------------------
+
+namespace {
+
+// A frame with exactly `n` usable stars in every channel, red displaced.
+Synth make_sparse_frame(int w, int h, int n, double s, double tx, double ty) {
+    Synth out;
+    out.image = Image(w, h, 3);
+    out.image.fill(0.002f);
+    const double cx = (w - 1) / 2.0, cy = (h - 1) / 2.0;
+
+    for (int i = 0; i < n; i++) {
+        // Spread along a diagonal so the positions are never degenerate.
+        const double x = 30.0 + 0.37 + i * (w - 60.0) / std::max(1, n - 1);
+        const double y = 30.0 + 0.61 + i * (h - 60.0) / std::max(1, n - 1);
+        draw_star(out.image, 1, x, y);
+        draw_star(out.image, 2, x, y);
+        draw_star(out.image, 0, s * (x - cx) + tx + cx, s * (y - cy) + ty + cy);
+        Star st; st.x = float(x); st.y = float(y); out.catalog.stars.push_back(st);
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("too few stars for four parameters falls back to translation only",
+          "[channel_registration]") {
+    // 5 stars: below min_stars_affine (8), above min_stars_translation (3).
+    Synth f = make_sparse_frame(600, 600, 5, 1.0, 0.4, -0.25);
+
+    ChannelTransforms ct = measure_channel_transforms(f.image, f.catalog, 1);
+    const ChannelTransform& red = ct.per_channel[0];
+
+    REQUIRE(red.fit == ChannelTransform::Fit::TranslationOnly);
+    CHECK(red.s == 1.0);
+    CHECK(std::abs(red.tx - 0.4)  < 0.05);
+    CHECK(std::abs(red.ty + 0.25) < 0.05);
+}
+
+TEST_CASE("too few stars for translation falls back to identity",
+          "[channel_registration]") {
+    Synth f = make_sparse_frame(600, 600, 2, 1.0, 0.4, -0.25);
+
+    ChannelTransforms ct = measure_channel_transforms(f.image, f.catalog, 1);
+    const ChannelTransform& red = ct.per_channel[0];
+
+    REQUIRE(red.fit == ChannelTransform::Fit::Identity);
+    REQUIRE(red.is_identity());
+}
+
+TEST_CASE("no stars at all yields empty transforms",
+          "[channel_registration]") {
+    Image img(400, 400, 3);
+    img.fill(0.002f);
+    ChannelTransforms ct = measure_channel_transforms(img, StarCatalog{}, 1);
+    REQUIRE(ct.empty());
+}
+
+TEST_CASE("an implausible scale is rejected rather than applied",
+          "[channel_registration]") {
+    // 5% is five hundred times any real lateral colour. A fit this far out is
+    // a bad solve, and applying it would wreck the frame.
+    Synth f = make_frame(800, 800, 1.05, 0.0, 0.0);
+
+    ChannelTransforms ct = measure_channel_transforms(f.image, f.catalog, 1);
+    const ChannelTransform& red = ct.per_channel[0];
+
+    REQUIRE(red.fit == ChannelTransform::Fit::Identity);
+    REQUIRE(red.is_identity());
+}
+
+TEST_CASE("an implausible translation is rejected rather than applied",
+          "[channel_registration]") {
+    Synth f = make_frame(800, 800, 1.0, 9.0, 0.0);
+
+    ChannelTransforms ct = measure_channel_transforms(f.image, f.catalog, 1);
+    const ChannelTransform& red = ct.per_channel[0];
+
+    REQUIRE(red.fit == ChannelTransform::Fit::Identity);
+    REQUIRE(red.is_identity());
+}
+
+TEST_CASE("a star invisible in one channel is dropped from that channel's fit "
+          "and kept in the others", "[channel_registration]") {
+    // The dual-narrowband case: red is Ha, blue is OIII, and plenty of stars
+    // are strong in one and absent from the other.
+    const double s = 1.0005, tx = 0.30, ty = -0.20;
+    Synth f = make_frame(800, 800, s, tx, ty);
+
+    // Erase half the red stars. Red must still fit -- from the survivors.
+    const double cx = 399.5, cy = 399.5;
+    int erased = 0;
+    for (size_t i = 0; i < f.catalog.stars.size(); i += 2) {
+        const Star& st = f.catalog.stars[i];
+        const int rx = int(std::lround(s * (st.x - cx) + tx + cx));
+        const int ry = int(std::lround(s * (st.y - cy) + ty + cy));
+        for (int dy = -7; dy <= 7; dy++)
+            for (int dx = -7; dx <= 7; dx++) {
+                int px = rx + dx, py = ry + dy;
+                if (px < 0 || px >= 800 || py < 0 || py >= 800) continue;
+                f.image.at(px, py, 0) = 0.002f;
+            }
+        erased++;
+    }
+    REQUIRE(erased > 0);
+
+    ChannelTransforms ct = measure_channel_transforms(f.image, f.catalog, 1);
+
+    const ChannelTransform& red = ct.per_channel[0];
+    REQUIRE(red.fit == ChannelTransform::Fit::Affine);
+    CHECK(red.n_stars < int(f.catalog.stars.size()));
+    CHECK(red.n_stars > 0);
+    const double R = std::hypot(cx, cy);
+    CHECK(std::abs(red.s - s) * R < 0.03);
+
+    // Blue was untouched and must have used every star.
+    CHECK(ct.per_channel[2].n_stars == int(f.catalog.stars.size()));
+}
+
+TEST_CASE("a star with a close neighbour is excluded from the fit",
+          "[channel_registration]") {
+    // StarDetector's exclusion_radius is 5 by default and the centroid box is
+    // 13 wide, so the detector hands over stars whose boxes overlap. Their
+    // centroids get dragged by the neighbour, and by a different amount in
+    // each channel, so they have to be dropped here.
+    const double s = 1.0005, tx = 0.30, ty = -0.20;
+    Synth f = make_frame(800, 800, s, tx, ty);
+    const double cx = 399.5, cy = 399.5;
+
+    // Give the first three stars a companion 8 px away, in every channel, and
+    // put the companions in the catalog -- that is what the detector would do.
+    const size_t n_before = f.catalog.stars.size();
+    std::vector<std::pair<double, double>> companions;
+    for (size_t i = 0; i < 3; i++)
+        companions.emplace_back(f.catalog.stars[i].x + 8.0,
+                                f.catalog.stars[i].y + 0.0);
+    for (auto [ox, oy] : companions) {
+        draw_star(f.image, 1, ox, oy, 0.3);
+        draw_star(f.image, 2, ox, oy, 0.3);
+        draw_star(f.image, 0, s * (ox - cx) + tx + cx, s * (oy - cy) + ty + cy, 0.3);
+        Star st; st.x = float(ox); st.y = float(oy); f.catalog.stars.push_back(st);
+    }
+
+    ChannelTransforms ct = measure_channel_transforms(f.image, f.catalog, 1);
+    const ChannelTransform& red = ct.per_channel[0];
+
+    // Both members of each crowded pair go: 3 originals + 3 companions.
+    REQUIRE(red.n_stars == int(n_before) - 3);
+
+    // And the fit is still good, because the isolated stars carry it.
+    const double R = std::hypot(cx, cy);
+    CHECK(std::abs(red.s - s) * R < 0.02);
+    CHECK(std::abs(red.tx - tx) < 0.02);
+}
+
+TEST_CASE("an outlier centroid is clipped out of the fit",
+          "[channel_registration]") {
+    const double s = 1.0005, tx = 0.30, ty = -0.20;
+    Synth f = make_frame(800, 800, s, tx, ty);
+
+    // Move one red star far from where the model says it should be, the way a
+    // cosmic ray hit or a blended neighbour would.
+    const double cx = 399.5, cy = 399.5;
+    const Star& st = f.catalog.stars[3];
+    const int rx = int(std::lround(s * (st.x - cx) + tx + cx));
+    const int ry = int(std::lround(s * (st.y - cy) + ty + cy));
+    draw_star(f.image, 0, rx + 3.0, ry + 3.0, 2.0);
+
+    ChannelTransforms ct = measure_channel_transforms(f.image, f.catalog, 1);
+    const ChannelTransform& red = ct.per_channel[0];
+
+    // Without clipping, one 4 px outlier among 25 stars drags the fit well
+    // past 0.02 px. With clipping it barely registers.
+    const double R = std::hypot(cx, cy);
+    CHECK(std::abs(red.s - s) * R < 0.02);
+    CHECK(std::abs(red.tx - tx) < 0.02);
+    CHECK(red.n_stars < int(f.catalog.stars.size()));
+}
