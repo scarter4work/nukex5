@@ -197,11 +197,26 @@ the output channels are co-registered.
 **Acceptance, on real data.** Re-run the M3 set and measure red-to-green
 separation in the stack.
 
-| | |
+The bar is a RATIO, not an absolute pixel count, and that is a correction to
+an earlier draft of this document. Re-measuring the same stack with the final
+centroid estimator and a larger star sample gave different absolute numbers
+than the figures this document was first written with -- 0.354 px and 0.081 px
+rather than 0.435 px and 0.058 px -- because the estimator and the sample both
+changed while the spec was being written. Nothing about the data changed.
+
+An absolute threshold inherits that fragility: it silently encodes whichever
+estimator happened to measure it. A ratio against the blue-green floor,
+measured on the same image with the same code in the same run, does not.
+
+| measured on the shipped v5.0.1.0 stack, 1047 stars | |
 |---|---|
-| today | 0.435 px |
-| floor (blue vs green, centroid noise) | 0.058 px |
-| **done at** | **median below 0.10 px** |
+| red vs green | 0.354 px |
+| blue vs green, the centroid-noise floor | 0.081 px |
+| ratio today | **4.4x** |
+| **done at** | **ratio at or below 1.5x** |
+
+Blue is the control. It is subject to identical centroid noise and has almost
+no colour error to correct, so the ratio isolates what the feature is for.
 
 Green's star FWHM must be unchanged, since green is never resampled. A change
 there means something is broken.
