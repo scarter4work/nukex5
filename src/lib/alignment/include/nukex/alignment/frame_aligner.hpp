@@ -5,6 +5,7 @@
 #include "nukex/alignment/star_matcher.hpp"
 #include "nukex/alignment/homography.hpp"
 #include "nukex/alignment/channel_registration.hpp"
+#include "nukex/alignment/coverage_mask.hpp"
 #include "nukex/io/image.hpp"
 
 namespace nukex {
@@ -53,6 +54,14 @@ public:
         /// Empty for a mono frame, when registration is off, or when nothing
         /// could be measured.
         ChannelTransforms channels;
+
+        /// Which pixels of `image` actually received source data.
+        ///
+        /// Empty when the frame was cloned rather than warped -- an unwarped
+        /// frame covers itself completely, so there is nothing to record and
+        /// no allocation to pay for. CoverageMask::empty() therefore reads as
+        /// "everything is covered", and the accumulator treats it that way.
+        CoverageMask coverage;
 
         int frame_index;
     };

@@ -528,12 +528,26 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // ChannelConfig::merge(), not a runtime input failure).
     auto route_sample_idx = [&](SubcubeVoxel& voxel,
                                 int idx,
-                                float value) {
+                                float value,
+                                bool covered) {
+        // An uncovered pixel is not a measurement of darkness, it is the
+        // absence of a measurement. warp leaves 0 outside the source and 0
+        // is a legal pixel value, so without this guard every frame's
+        // dither excursion was averaged in as black: measured on a 53-frame
+        // M3 stack, a rim at 48.6% of interior brightness reaching 48 px
+        // deep, and 268,802 exactly-zero pixels.
+        if (!covered) return;
         voxel.channel(idx).welford.update(value);
         if (voxel.channel(idx).welford.count() == 1) {
             voxel.channel(idx).histogram.initialize_range(value - 0.1f, value + 0.1f);
         }
         voxel.channel(idx).histogram.update(value);
+    };
+
+    // An empty mask means the frame was cloned rather than warped, so it
+    // covers itself completely.
+    auto covered_at = [](const CoverageMask& cov, int c, int y, int x) {
+        return cov.empty() || cov.covered(c, y, x);
     };
 
     for (int f = 0; f < n_frames; f++) {
@@ -776,11 +790,16 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                         float g = aligned.image.at(x, y, 1);
                         float b = aligned.image.at(x, y, 2);
                         float l = 0.299f * r + 0.587f * g + 0.114f * b;
-                        route_sample_idx(voxel, r_idx, r);
-                        route_sample_idx(voxel, g_idx, g);
-                        route_sample_idx(voxel, b_idx, b);
-                        route_sample_idx(voxel, l_idx, l);
-                        voxel.n_frames++;
+                        const bool cr = covered_at(aligned.coverage, 0, y, x);
+                        const bool cg = covered_at(aligned.coverage, 1, y, x);
+                        const bool cb = covered_at(aligned.coverage, 2, y, x);
+                        route_sample_idx(voxel, r_idx, r, cr);
+                        route_sample_idx(voxel, g_idx, g, cg);
+                        route_sample_idx(voxel, b_idx, b, cb);
+                        // Synthetic luminance mixes all three planes, so it
+                        // is only a measurement where all three are.
+                        route_sample_idx(voxel, l_idx, l, cr && cg && cb);
+                        if (cr || cg || cb) voxel.n_frames++;
                     }
                 }
                 break;
@@ -802,10 +821,13 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                 for (int y = 0; y < out_height; y++) {
                     for (int x = 0; x < out_width; x++) {
                         auto& voxel = cube.at(x, y);
-                        route_sample_idx(voxel, r_idx, aligned.image.at(x, y, 0));
-                        route_sample_idx(voxel, g_idx, aligned.image.at(x, y, 1));
-                        route_sample_idx(voxel, b_idx, aligned.image.at(x, y, 2));
-                        voxel.n_frames++;
+                        const bool cr = covered_at(aligned.coverage, 0, y, x);
+                        const bool cg = covered_at(aligned.coverage, 1, y, x);
+                        const bool cb = covered_at(aligned.coverage, 2, y, x);
+                        route_sample_idx(voxel, r_idx, aligned.image.at(x, y, 0), cr);
+                        route_sample_idx(voxel, g_idx, aligned.image.at(x, y, 1), cg);
+                        route_sample_idx(voxel, b_idx, aligned.image.at(x, y, 2), cb);
+                        if (cr || cg || cb) voxel.n_frames++;
                     }
                 }
                 break;
@@ -836,8 +858,9 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                 for (int y = 0; y < out_height; y++) {
                     for (int x = 0; x < out_width; x++) {
                         auto& voxel = cube.at(x, y);
-                        route_sample_idx(voxel, slot_idx, aligned.image.at(x, y, 0));
-                        voxel.n_frames++;
+                        const bool c0 = covered_at(aligned.coverage, 0, y, x);
+                        route_sample_idx(voxel, slot_idx, aligned.image.at(x, y, 0), c0);
+                        if (c0) voxel.n_frames++;
                     }
                 }
                 break;

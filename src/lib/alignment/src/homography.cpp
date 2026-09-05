@@ -313,6 +313,21 @@ Image HomographyComputer::warp(const Image& source, const HomographyMatrix& H,
 Image HomographyComputer::warp(const Image& source, const HomographyMatrix& H,
                                int output_width, int output_height,
                                const ChannelTransforms& channels) {
+    return warp_impl(source, H, output_width, output_height, channels, nullptr);
+}
+
+Image HomographyComputer::warp(const Image& source, const HomographyMatrix& H,
+                               int output_width, int output_height,
+                               const ChannelTransforms& channels,
+                               CoverageMask& coverage) {
+    coverage = CoverageMask(output_width, output_height, source.n_channels());
+    return warp_impl(source, H, output_width, output_height, channels, &coverage);
+}
+
+Image HomographyComputer::warp_impl(const Image& source, const HomographyMatrix& H,
+                                    int output_width, int output_height,
+                                    const ChannelTransforms& channels,
+                                    CoverageMask* coverage) {
     Image output(output_width, output_height, source.n_channels());
 
     // A source narrower or shorter than 2 px has no `+1` neighbour for
@@ -377,6 +392,10 @@ Image HomographyComputer::warp(const Image& source, const HomographyMatrix& H,
                             v11 * fx * fy;
 
                 output.at(x, y, ch) = val;
+                // This pixel was sampled from real source data. Everything
+                // the `continue`s above skipped stays uncovered, and the
+                // stacker must not count it as a measurement of black.
+                if (coverage) coverage->set_covered(ch, y, x, true);
             }
         }
     }

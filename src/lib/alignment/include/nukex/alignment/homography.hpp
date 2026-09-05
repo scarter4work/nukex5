@@ -2,6 +2,7 @@
 
 #include "nukex/alignment/channel_registration.hpp"
 #include "nukex/alignment/types.hpp"
+#include "nukex/alignment/coverage_mask.hpp"
 #include "nukex/io/image.hpp"
 
 namespace nukex {
@@ -51,12 +52,31 @@ public:
                       int output_width, int output_height,
                       const ChannelTransforms& channels);
 
+    /// Warp, recording which output pixels actually received source data.
+    ///
+    /// Pixels outside the source's coverage are left at 0, and 0 is a legal
+    /// pixel value, so the accumulator cannot tell absent data from measured
+    /// darkness without this mask. `coverage` is resized to
+    /// (output_width, output_height, source.n_channels()) and every pixel
+    /// this call samples is marked covered.
+    static Image warp(const Image& source, const HomographyMatrix& H,
+                      int output_width, int output_height,
+                      const ChannelTransforms& channels,
+                      CoverageMask& coverage);
+
     /// Correct a meridian-flipped homography by pre-multiplying with
     /// a 180-degree rotation about the image center.
     static HomographyMatrix correct_meridian_flip(
         const HomographyMatrix& H, int width, int height);
 
 private:
+    /// Shared body of the warp overloads. `coverage` may be null when the
+    /// caller does not need to know which pixels were sampled.
+    static Image warp_impl(const Image& source, const HomographyMatrix& H,
+                           int output_width, int output_height,
+                           const ChannelTransforms& channels,
+                           CoverageMask* coverage);
+
     /// Solve for homography from exactly 4 point correspondences using DLT.
     static HomographyMatrix dlt_4point(
         const float src_x[4], const float src_y[4],

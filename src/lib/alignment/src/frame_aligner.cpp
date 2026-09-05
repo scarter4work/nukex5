@@ -59,11 +59,16 @@ FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_ind
         result.alignment.H = HomographyMatrix::identity();
         result.alignment.match.success = true;
         result.alignment.match.n_inliers = result.stars.size();
-        result.image = channels_matter
-            ? HomographyComputer::warp(frame, result.alignment.H,
-                                       frame.width(), frame.height(),
-                                       result.channels)
-            : frame.clone();
+        if (channels_matter) {
+            result.image = HomographyComputer::warp(frame, result.alignment.H,
+                                                    frame.width(), frame.height(),
+                                                    result.channels,
+                                                    result.coverage);
+        } else {
+            // Cloned, not warped: it covers itself completely, so the mask
+            // stays empty and reads as fully covered.
+            result.image = frame.clone();
+        }
         return result;
     }
 
@@ -84,14 +89,16 @@ FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_ind
     if (!result.alignment.alignment_failed) {
         result.image = HomographyComputer::warp(
             frame, result.alignment.H, ref_width_, ref_height_,
-            channels_matter ? result.channels : ChannelTransforms{});
+            channels_matter ? result.channels : ChannelTransforms{},
+            result.coverage);
     } else if (channels_matter) {
         // Failed alignment: the frame is still stacked, with its weight
         // penalised, so its channels still have to be put right. The
         // homography is the identity because there isn't a usable one.
         result.image = HomographyComputer::warp(
             frame, HomographyMatrix::identity(),
-            frame.width(), frame.height(), result.channels);
+            frame.width(), frame.height(), result.channels,
+            result.coverage);
     } else {
         result.image = frame.clone();
     }
