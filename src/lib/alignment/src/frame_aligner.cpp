@@ -24,9 +24,12 @@ FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_ind
     // with the frame-to-frame transform.
     if (config_.register_channels && frame.n_channels() >= 2
         && !result.stars.empty()) {
+        // Same expression star detection used, so the two cannot disagree
+        // if a caller ever sets star_config.channel.
         result.channels = measure_channel_transforms(
             frame, result.stars,
-            default_reference_channel(frame.n_channels()),
+            resolve_detection_channel(config_.star_config.channel,
+                                      frame.n_channels()),
             config_.channel_config);
     }
 

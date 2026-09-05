@@ -134,9 +134,17 @@ ChannelTransform fit_affine(const std::vector<Pair>& p) {
         den += (q.u - mu) * (q.u  - mu)  + (q.v - mv) * (q.v  - mv);
     }
 
-    // den is the spread of the stars about their own centroid. It vanishes
-    // only if every star sits at one point, which the caller's star count
-    // makes impossible in practice, but a division by it must still be safe.
+    // den is the spread of the stars about their own centroid, in pixels
+    // squared summed over the stars. It vanishes only if every star sits at
+    // one point, which the caller's star count makes impossible in practice,
+    // but a division by it must still be safe.
+    //
+    // The magnitude is chosen against those units, not as a generic epsilon:
+    // real inputs put den in the 1e4-1e8 range (hundreds of stars spread
+    // over a frame thousands of pixels wide), so 1e-9 is some thirteen
+    // orders of magnitude below anything legitimate. It rejects only a
+    // genuinely degenerate configuration and can never fire on real data,
+    // which is what a guard on a physically-impossible case should do.
     t.s  = (den > 1e-9) ? (num / den) : 1.0;
     t.tx = mup - t.s * mu;
     t.ty = mvp - t.s * mv;

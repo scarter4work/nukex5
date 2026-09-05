@@ -2,6 +2,7 @@
 #include "nukex/alignment/channel_registration.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 using namespace nukex;
@@ -400,4 +401,148 @@ TEST_CASE("describe_channel_transforms names channels the fit gave up on",
     CHECK(s.find("ch2") != std::string::npos);
     CHECK(s.find("identity") != std::string::npos);
     CHECK(s.find("ch1") == std::string::npos);   // the reference is not reported
+}
+
+// ---------------------------------------------------------------------------
+// Boundary cases the earlier work left untested. Erasing a star entirely is a
+// different condition from a star that is present but below threshold, and it
+// is the present-but-faint case that a dual-narrowband frame actually
+// produces.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Deterministic, reproducible noise. A fixed lattice rather than a PRNG so a
+// failure is the same failure on every machine and every run.
+void add_fixed_noise(Image& img, int ch, float amplitude) {
+    // xorshift per pixel. A plain hash of (x, y) was tried first and was a
+    // trap: along the 48-pixel border of one centroid box its low byte
+    // clumped, so the ring's MAD came out near 1e-4 and the SNR gate could
+    // not bite however high the threshold went. The noise a gate test uses
+    // has to have real robust spread, not merely be non-constant.
+    for (int y = 0; y < img.height(); y++)
+        for (int x = 0; x < img.width(); x++) {
+            std::uint32_t st = static_cast<std::uint32_t>(x) * 1973u
+                             + static_cast<std::uint32_t>(y) * 9277u + 1u;
+            st ^= st << 13; st ^= st >> 17; st ^= st << 5;
+            const float u = static_cast<float>((st & 0xFFFFu) / 65535.0 - 0.5);
+            img.at(x, y, ch) += amplitude * u;
+        }
+}
+
+// Like make_frame, but the red stars are drawn at a caller-chosen amplitude so
+// a test can put them just above or just below the gate.
+Synth make_faint_red_frame(int w, int h, double s, double tx, double ty,
+                           double red_amplitude) {
+    Synth out;
+    out.image = Image(w, h, 3);
+    out.image.fill(0.002f);
+    const double cx = (w - 1) / 2.0, cy = (h - 1) / 2.0;
+    for (auto [x, y] : star_grid(w, h, 5)) {
+        draw_star(out.image, 1, x, y);
+        draw_star(out.image, 2, x, y);
+        draw_star(out.image, 0, s * (x - cx) + tx + cx, s * (y - cy) + ty + cy,
+                  red_amplitude);
+        Star st;
+        st.x = static_cast<float>(x);
+        st.y = static_cast<float>(y);
+        st.flux = 1.0f;
+        out.catalog.stars.push_back(st);
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("a present but faint star is dropped when it falls under the SNR gate",
+          "[channel_registration]") {
+    // Red stars exist here -- they are not erased. What decides their fate is
+    // the gate, and only the gate.
+    Synth f = make_faint_red_frame(800, 800, 1.0005, 0.30, -0.20,
+                                   /*red_amplitude*/ 0.05);
+    add_fixed_noise(f.image, 0, 0.02f);
+
+    ChannelRegistrationConfig permissive;
+    permissive.min_star_snr = 0.5f;
+    ChannelTransforms lo = measure_channel_transforms(f.image, f.catalog, 1,
+                                                      permissive);
+    REQUIRE(lo.per_channel[0].n_stars > 0);
+
+    ChannelRegistrationConfig strict;
+    strict.min_star_snr = 500.0f;   // no real star clears this
+    ChannelTransforms hi = measure_channel_transforms(f.image, f.catalog, 1,
+                                                      strict);
+
+    // Same pixels, same stars, different threshold: the gate is what moved.
+    INFO("lo n_stars=" << lo.per_channel[0].n_stars
+         << " fit=" << int(lo.per_channel[0].fit)
+         << " | hi n_stars=" << hi.per_channel[0].n_stars
+         << " fit=" << int(hi.per_channel[0].fit));
+    CHECK(hi.per_channel[0].n_stars < lo.per_channel[0].n_stars);
+    CHECK(hi.per_channel[0].fit == ChannelTransform::Fit::Identity);
+}
+
+TEST_CASE("a noiseless field has zero sigma and is not rejected by the gate",
+          "[channel_registration]") {
+    // The MAD-degenerate corner. A synthetic frame with a flat background has
+    // an exactly-zero ring spread, so `peak < min_snr * sigma` would be true
+    // for every star at any threshold and the fit would silently vanish. The
+    // implementation guards sigma <= 0 separately; this pins that it does.
+    Synth f = make_frame(800, 800, 1.0005, 0.30, -0.20);
+
+    ChannelRegistrationConfig cfg;
+    cfg.min_star_snr = 1000.0f;   // absurd, and must not matter
+    ChannelTransforms ct = measure_channel_transforms(f.image, f.catalog, 1, cfg);
+
+    CHECK(ct.per_channel[0].n_stars > 0);
+    CHECK(ct.per_channel[0].fit == ChannelTransform::Fit::Affine);
+}
+
+TEST_CASE("when the clip would drop below min_stars_affine, the unclipped "
+          "affine is kept rather than descending", "[channel_registration]") {
+    // The corner the earlier work left untested, and it does NOT descend --
+    // fit_channel only accepts the clipped refit when the survivors still
+    // reach min_stars_affine (and the clip actually removed something).
+    // Otherwise it returns the affine fitted on ALL pairs. Pinning the real
+    // behaviour, because a reader would reasonably guess the opposite.
+    const double s = 1.0005, tx = 0.30, ty = -0.20;
+    const double cx = 399.5, cy = 399.5;
+
+    auto with_outliers = [&]() {
+        Synth f = make_frame(800, 800, s, tx, ty);
+        // Displace four red stars well off the true transform. They stay
+        // bright, so only the residual clip can remove them.
+        for (size_t i = 0; i < f.catalog.stars.size(); i += 6) {
+            const Star& st = f.catalog.stars[i];
+            const double rx = s * (st.x - cx) + tx + cx;
+            const double ry = s * (st.y - cy) + ty + cy;
+            for (int dy = -7; dy <= 7; dy++)
+                for (int dx = -7; dx <= 7; dx++) {
+                    int px = int(std::lround(rx)) + dx;
+                    int py = int(std::lround(ry)) + dy;
+                    if (px < 0 || px >= 800 || py < 0 || py >= 800) continue;
+                    f.image.at(px, py, 0) = 0.002f;
+                }
+            draw_star(f.image, 0, rx + 2.0, ry - 1.5);
+        }
+        return f;
+    };
+
+    Synth f = with_outliers();
+    const int n_total = static_cast<int>(f.catalog.stars.size());
+
+    // Default bar: the survivors clear it, so the clipped refit is used and
+    // the outliers are gone from the count.
+    ChannelTransforms clipped = measure_channel_transforms(f.image, f.catalog, 1);
+    CHECK(clipped.per_channel[0].fit == ChannelTransform::Fit::Affine);
+    CHECK(clipped.per_channel[0].n_stars < n_total);
+
+    // Bar raised to the full star count: now the clip WOULD drop below it,
+    // so the unclipped affine is kept and every pair is counted.
+    ChannelRegistrationConfig strict_bar;
+    strict_bar.min_stars_affine = n_total;
+    ChannelTransforms unclipped =
+        measure_channel_transforms(f.image, f.catalog, 1, strict_bar);
+    CHECK(unclipped.per_channel[0].fit == ChannelTransform::Fit::Affine);
+    CHECK(unclipped.per_channel[0].n_stars > clipped.per_channel[0].n_stars);
 }

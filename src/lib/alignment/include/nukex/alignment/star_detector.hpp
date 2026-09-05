@@ -14,6 +14,21 @@ inline int default_reference_channel(int n_channels) {
     return n_channels >= 3 ? 1 : 0;
 }
 
+/// Resolve a StarDetector::Config::channel value against an image.
+///
+/// Star detection and channel registration MUST agree on this channel: the
+/// frame-to-frame homography is fitted from centroids on the detection
+/// channel, and channel registration measures every other channel against
+/// its reference. Deriving them from two separate expressions let a caller
+/// who set Config::channel silently pull them apart -- detection on red,
+/// registration referenced to green -- with no test able to see it. One
+/// definition, used by both.
+inline int resolve_detection_channel(int configured, int n_channels) {
+    return (configured >= 0 && configured < n_channels)
+         ? configured
+         : default_reference_channel(n_channels);
+}
+
 /// Detect stars in an image via local maxima detection + Gaussian centroid refinement.
 ///
 /// Process:

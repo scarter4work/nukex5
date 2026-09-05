@@ -198,9 +198,7 @@ StarCatalog StarDetector::detect(const Image& image, const Config& config) {
         return catalog;
     }
 
-    const int ch = (config.channel >= 0 && config.channel < image.n_channels())
-                 ? config.channel
-                 : default_reference_channel(image.n_channels());
+    const int ch = resolve_detection_channel(config.channel, image.n_channels());
 
     // Saturation guard: reject frames where a majority of pixels are clipped
     // to saturation.  Without this, find_local_maxima sees the entire clipped

@@ -722,7 +722,10 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             if (applied || gave_up) {
                 const std::string desc =
                     describe_channel_transforms(aligned.channels, corner_radius);
-                if (!desc.empty()) obs.advance(0, "  channel reg: " + desc);
+                // No emptiness check: describe_channel_transforms always
+                // returns text when a correction was applied or a channel
+                // gave up, and those are exactly the two conditions above.
+                obs.advance(0, "  channel reg: " + desc);
             }
         }
 
