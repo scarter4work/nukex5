@@ -2080,11 +2080,19 @@ The `read_planes` stub is deliberate and must be filled in by whoever runs this 
 
 Re-stack `/home/scarter4work/projects/processing/M3` with the new build and run the script on `NukeX_stacked`.
 
-| | |
+| measured on the shipped stack, 1047 stars | |
 |---|---|
-| before | R-G 0.435 px |
-| floor | B-G 0.058 px |
-| **bar** | **R-G median below 0.10 px** |
+| red vs green | 0.354 px |
+| blue vs green, the floor | 0.081 px |
+| ratio today | **4.4x** |
+| **bar** | **ratio at or below 1.5x** |
+
+The bar is a ratio rather than an absolute pixel figure, deliberately. An
+absolute threshold encodes whichever centroid estimator measured it, and this
+document's first draft proved the point: it quoted 0.435 and 0.058 from an
+earlier estimator and a smaller sample. Measuring blue on the same image in
+the same run gives a floor that moves with the estimator, so the ratio stays
+meaningful when the absolute numbers do not.
 
 Also check green's median star FWHM against the previous stack. Green is never resampled, so it must be unchanged. A change there means the reference channel is being warped, which would be a bug in Task 5's near-identity path.
 
