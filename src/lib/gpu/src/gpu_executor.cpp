@@ -509,7 +509,7 @@ void GPUExecutor::execute_phase_b(
                 const int navail = static_cast<int>(buf.n_frames[ch * count + vi]);
                 int k = 0;
                 for (int fi = 0; fi < navail && fi < N; fi++) {
-                    if (!buf.sample_valid(ch, fi, vi)) continue;
+                    if (!buf.sample_valid(ch, fi, vi, count)) continue;
                     vals[ch * N + k] = buf.pixel_values[ch * N * count + fi * count + vi];
                     wts [ch * N + k] = buf.pixel_weights[ch * N * count + fi * count + vi];
                     ++k;

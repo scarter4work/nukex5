@@ -124,7 +124,7 @@ void ShadowBuffers::extract_from_cube(
             int n_copy = std::min(nf_read, N);
             for (int fi = 0; fi < n_copy; fi++) {
                 pixel_values[ch * N * B + fi * B + vi] = frame_vals[fi];
-                set_sample_valid(ch, fi, vi, frame_ok[fi] != 0);
+                set_sample_valid(ch, fi, vi, frame_ok[fi] != 0, B);
             }
             n_frames[ch * B + vi] = static_cast<uint16_t>(n_copy);
         }

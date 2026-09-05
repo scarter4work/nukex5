@@ -367,3 +367,48 @@ TEST_CASE("CPU Fallback: kernel output does not depend on batch size",
         }
     }
 }
+
+TEST_CASE("ShadowBuffers: coverage bits use the batch's own stride, not the "
+          "allocated one", "[gpu][fallback][coverage]") {
+    // The final batch of a cube is usually PARTIAL, so the voxel stride the
+    // kernels use (count) is smaller than the stride the buffers were
+    // allocated for (batch_size). Writing the coverage bits at one stride and
+    // reading them at the other put them where nothing looked, and since the
+    // number of batches now depends on free memory, that made pixel output
+    // vary between otherwise identical runs -- but only on cubes big enough
+    // to need more than one batch, which is why the two OSC corpora moved and
+    // the single-batch mono ones did not.
+    const int alloc_B = 100, C = 2, N = 4;
+    ShadowBuffers buf;
+    buf.allocate(alloc_B, C, N);
+    // extract_from_cube sizes the plane; do the same here.
+    buf.pixel_valid.assign((static_cast<std::size_t>(C) * N * alloc_B + 7) / 8, 0);
+
+    const int count = 37;   // a partial final batch
+    REQUIRE(count < alloc_B);
+
+    // Mark a deterministic pattern using the BATCH stride.
+    auto want = [](int ch, int fi, int vi) { return ((ch * 7 + fi * 3 + vi) % 5) != 0; };
+    for (int ch = 0; ch < C; ch++)
+        for (int fi = 0; fi < N; fi++)
+            for (int vi = 0; vi < count; vi++)
+                buf.set_sample_valid(ch, fi, vi, want(ch, fi, vi), count);
+
+    // Read it back at the same stride: every bit must survive.
+    for (int ch = 0; ch < C; ch++)
+        for (int fi = 0; fi < N; fi++)
+            for (int vi = 0; vi < count; vi++) {
+                INFO("ch=" << ch << " fi=" << fi << " vi=" << vi);
+                REQUIRE(buf.sample_valid(ch, fi, vi, count) == want(ch, fi, vi));
+            }
+
+    // And reading at the ALLOCATED stride must NOT agree, which is exactly
+    // the mistake this guards: if the two ever coincide the test is vacuous.
+    int disagreements = 0;
+    for (int ch = 0; ch < C; ch++)
+        for (int fi = 0; fi < N; fi++)
+            for (int vi = 0; vi < count; vi++)
+                if (buf.sample_valid(ch, fi, vi, alloc_B) != want(ch, fi, vi))
+                    ++disagreements;
+    REQUIRE(disagreements > 0);
+}

@@ -55,15 +55,23 @@ struct ShadowBuffers {
     /// The plane costs C*N/8 bytes per voxel, about 1% of the record.
     std::vector<uint8_t>  pixel_valid;
 
-    bool sample_valid(int ch, int fi, int vi) const {
+    /// `stride` must be the SAME voxel stride pixel_values was written with,
+    /// which is the batch's `count` -- not `batch_size`. The final batch of a
+    /// cube is usually partial, so the two differ, and using the member here
+    /// put the coverage bits at offsets the kernels never read. Because the
+    /// number of batches now depends on free memory, that made pixel output
+    /// vary run to run on any cube large enough to need more than one batch:
+    /// the two OSC corpora moved between otherwise identical runs while the
+    /// single-batch mono ones stayed stable.
+    bool sample_valid(int ch, int fi, int vi, int stride) const {
         if (pixel_valid.empty()) return true;   // no mask: everything covered
         const std::size_t b = (static_cast<std::size_t>(ch) * max_frames + fi)
-                            * batch_size + vi;
+                            * stride + vi;
         return (pixel_valid[b >> 3] >> (b & 7)) & 1u;
     }
-    void set_sample_valid(int ch, int fi, int vi, bool v) {
+    void set_sample_valid(int ch, int fi, int vi, bool v, int stride) {
         const std::size_t b = (static_cast<std::size_t>(ch) * max_frames + fi)
-                            * batch_size + vi;
+                            * stride + vi;
         const uint8_t bit = static_cast<uint8_t>(1u << (b & 7));
         if (v) pixel_valid[b >> 3] |= bit;
         else   pixel_valid[b >> 3] &= static_cast<uint8_t>(~bit);

@@ -75,7 +75,7 @@ void GPUCPUFallback::classify_weights(
                 // Weight it to EXACTLY zero -- before weight_floor, which
                 // would otherwise give it a vote -- so every later stage
                 // ignores it without needing to know why.
-                if (!buf.sample_valid(ch, fi, vi)) {
+                if (!buf.sample_valid(ch, fi, vi, B)) {
                     buf.pixel_weights[ch * N * B + fi * B + vi] = 0.0f;
                     continue;
                 }
@@ -157,7 +157,7 @@ void GPUCPUFallback::robust_stats(
             {
                 const int navail = std::min(nf, static_cast<int>(GPU_MAX_FRAMES));
                 for (int fi = 0; fi < navail; fi++)
-                    if (buf.sample_valid(ch, fi, vi))
+                    if (buf.sample_valid(ch, fi, vi, B))
                         vals[n++] = buf.pixel_values[ch * N * B + fi * B + vi];
             }
             if (n < 2) {
