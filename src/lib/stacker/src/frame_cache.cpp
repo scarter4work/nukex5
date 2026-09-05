@@ -148,6 +148,16 @@ int FrameCache::write_frame(const Image& aligned, int global_index,
         }
     }
 
+    // Ask the kernel to write these pages back now. A frame's writes are
+    // scattered across the whole mapping (the layout is pixel-major, so one
+    // frame touches every pixel's row), and without this the dirty pages
+    // simply accumulate: a 33-frame 24 MP OSC cache is 5.2 GB of dirty page
+    // cache held alongside a 14.8 GB voxel cube. On a 30 GB machine that is
+    // what pushes Phase A into swap, and on 2026-09-05 it was enough to get
+    // PixInsight OOM-killed mid-cache. MS_ASYNC only schedules the writeback,
+    // so this does not stall the caching loop.
+    msync(mapped_, mapped_size_, MS_ASYNC);
+
     frame_map_.push_back(global_index);
     // Published after the pixels are in place: Phase B reads
     // n_frames_written_ to decide how many slots are real.

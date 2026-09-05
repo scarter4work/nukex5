@@ -28,7 +28,7 @@
         }
       ],
       "golden_frozen": true,
-      "golden_note": "Frozen floor deliberately re-cut 2026-09-05 for the coverage fix, the only time it has moved. Cause is attributed, not assumed: the stacker could not tell an absent sample from a measured black, so every frame's dither excursion was averaged in as darkness. Measured on this exact corpus before and after -- exactly-zero pixels 31,158 -> 0, and the outermost ring 95% -> 101.4% of interior median. noise, stretched and composed follow from stacked. Do not re-cut this floor without the same kind of measurement."
+      "golden_note": "Frozen floor re-cut 2026-09-05 for v5.0.2.0. Two attributed causes, both measured on this corpus rather than assumed. (1) The stacker could not tell an absent sample from a measured black, so every frame's dither excursion was averaged in as darkness: exactly-zero pixels 31,158 -> 0, outermost ring 95% -> 101.4% of interior median. (2) The stretch intensity is now solved against each image's own background instead of shipping one log_D, which moves `stretched` and the three sweep entries. noise and composed follow from stacked. Do not re-cut this floor without the same kind of measurement."
     },
     {
       "name": "bayer_rgb_m27_2023",
