@@ -36,7 +36,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>   // std::getenv
 #include <filesystem>
@@ -45,6 +47,7 @@
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -702,6 +705,55 @@ bool NukeXInstance::ExecuteGlobal()
       const float* Ha_p   = slot_ptr( "Ha"   );
       const float* OIII_p = slot_ptr( "OIII" );
       const float* SII_p  = slot_ptr( "SII"  );
+
+      // Chroma gate, driven by the stack's own statistics rather than a
+      // constant. Normalising the emission chrominance by its total makes
+      // hue a line ratio (Lupton et al. 2004), but it also means blank sky
+      // would normalise to a bold colour. So chrominance vanishes at the
+      // measured sky level and reaches full strength three robust sigma
+      // above it. Sampled on a stride -- a median over every pixel of a
+      // 24 MP frame would copy ~200 MB to produce one number.
+      if ( Ha_p || OIII_p || SII_p )
+      {
+         const int stride = std::max( 1, N / 200000 );
+         std::vector<double> samples;
+         samples.reserve( static_cast<std::size_t>( N / stride ) + 1 );
+         for ( int p = 0; p < N; p += stride )
+         {
+            double tw = 0.0;
+            if ( Ha_p   ) tw += std::max( 0.0, static_cast<double>( Ha_p[p]   ) );
+            if ( OIII_p ) tw += std::max( 0.0, static_cast<double>( OIII_p[p] ) );
+            if ( SII_p  ) tw += std::max( 0.0, static_cast<double>( SII_p[p]  ) );
+            samples.push_back( tw );
+         }
+         if ( !samples.empty() )
+         {
+            const std::size_t mid = samples.size() / 2;
+            std::nth_element( samples.begin(), samples.begin() + mid, samples.end() );
+            const double median = samples[mid];
+            for ( double& v : samples )
+               v = std::fabs( v - median );
+            std::nth_element( samples.begin(), samples.begin() + mid, samples.end() );
+            const double mad = samples[mid];
+            // 1.4826 converts MAD to a Gaussian-equivalent sigma.
+            const double sigma = 1.4826 * mad;
+            if ( sigma > 0.0 )
+            {
+               composer.set_chroma_gate( median, median + 3.0*sigma );
+               Console().WriteLn( String().Format(
+                  "Chroma gate: sky %.6f, full colour at %.6f (3 sigma).",
+                  median, median + 3.0*sigma ) );
+            }
+            else
+            {
+               // A constant emission field has no noise scale to gate on.
+               // Say so rather than silently leaving colour ungated.
+               Console().WarningLn(
+                  "Chroma gate disabled: emission slots have zero spread, "
+                  "so no sky level could be measured." );
+            }
+         }
+      }
 
       ImageWindow cw( w, h, /*nc*/ 3,
                       32, true, true, true,

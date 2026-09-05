@@ -71,11 +71,23 @@ double ColorComposer::signal_weight(double v) {
 
 bool ColorComposer::clip_to_gamut(double& r, double& g, double& b) {
     bool clipped = false;
-    auto clamp = [&clipped](double& x) {
-        if (x < 0.0) { x = 0.0; clipped = true; }
-        else if (x > 1.0) { x = 1.0; clipped = true; }
-    };
-    clamp(r); clamp(g); clamp(b);
+
+    // Negative energy is not a hue, it is an absence: floor it first.
+    if (r < 0.0) { r = 0.0; clipped = true; }
+    if (g < 0.0) { g = 0.0; clipped = true; }
+    if (b < 0.0) { b = 0.0; clipped = true; }
+
+    // Lupton et al. 2004, PASP 116, 133: rescale all three channels by
+    // their common maximum, so the intensity is clipped at unity while the
+    // colour stays correct. Clamping each channel independently changes the
+    // hue of every over-bright pixel, which on a narrowband stack is most
+    // of the frame.
+    const double m = std::max(r, std::max(g, b));
+    if (m > 1.0) {
+        const double inv = 1.0 / m;
+        r *= inv; g *= inv; b *= inv;
+        clipped = true;
+    }
     return clipped;
 }
 
@@ -117,13 +129,36 @@ sRGBPixel ColorComposer::compose_pixel(const DerivedSlots& s) {
     LabColor pal_oiii = Palette::for_line(EmissionLineId::OIII);
     LabColor pal_sii  = Palette::for_line(EmissionLineId::SII);
 
-    double emission_a = 0.0, emission_b = 0.0;
+    double emission_a = 0.0, emission_b = 0.0, chroma_scale = 0.0;
     if (total_w > 0.0) {
-        emission_a = (w_ha * pal_ha.a + w_oiii * pal_oiii.a + w_sii * pal_sii.a);
-        emission_b = (w_ha * pal_ha.b + w_oiii * pal_oiii.b + w_sii * pal_sii.b);
+        // Hue is the RATIO of the emission lines, never their absolute
+        // strength. Lupton et al. 2004 (PASP 116, 133) state the rule this
+        // once violated: under any non-linear mapping an object's colour
+        // must not depend on its brightness. Brightness is carried by L
+        // alone, which is how STScI colorizes a narrowband layer -- fixed
+        // hue, fixed saturation, value carries the signal (Rector, Levay,
+        // Frattare et al. 2004, AJ).
+        const double inv_w = 1.0 / total_w;
+        emission_a = (w_ha * pal_ha.a + w_oiii * pal_oiii.a + w_sii * pal_sii.a) * inv_w;
+        emission_b = (w_ha * pal_ha.b + w_oiii * pal_oiii.b + w_sii * pal_sii.b) * inv_w;
+
+        // Normalisation alone would hand a pixel at total_w = 1e-9 the full
+        // palette vector. Ramp the chrominance down towards the measured
+        // sky level so faint data desaturates on purpose rather than by
+        // accident, and so blank sky is not painted a bold colour.
+        if (gate_full_scale_ > gate_background_) {
+            const double span = gate_full_scale_ - gate_background_;
+            chroma_scale = std::min(1.0,
+                std::max(0.0, (total_w - gate_background_) / span));
+        } else {
+            chroma_scale = 1.0;
+        }
+        emission_a *= chroma_scale;
+        emission_b *= chroma_scale;
     }
     last_emission_a_ = emission_a;
     last_emission_b_ = emission_b;
+    last_chroma_scale_ = chroma_scale;
 
     LabColor lab_final{
         lab_natural.L,
