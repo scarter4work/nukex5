@@ -71,17 +71,57 @@ const std::vector<FilterLevel> kLRGB = {
 
 } // namespace
 
-TEST_CASE("LRGB-mono: a multi-filter mono batch refuses to run rather than "
-          "emitting empty channels", "[integration][lrgb]") {
-    auto paths = write_mono_batch("refuse", kLRGB, 3);
+TEST_CASE("LRGB-mono: a four-filter mono batch stacks every channel",
+          "[integration][lrgb]") {
+    // This batch used to be refused, and before that it produced ONE
+    // populated channel and three exactly-zero ones -- an image that looked
+    // like a colour-balance problem and was not. Every mono frame is
+    // (W, H, 1), so a geometry-keyed cache collapsed all four filters into
+    // one file and no slot could read only its own frames.
+    auto paths = write_mono_batch("lrgb", kLRGB, 3);
     StackingEngine engine(test_config());
     auto result = engine.execute(paths, {}, nullptr);
 
-    REQUIRE_FALSE(result.ok);
     INFO("error: " << result.error);
-    // The message has to name what the user should do, not just what broke.
-    REQUIRE(result.error.find("mono") != std::string::npos);
-    REQUIRE(result.error.find("separately") != std::string::npos);
+    REQUIRE(result.ok);
+    REQUIRE(result.cube != nullptr);
+    REQUIRE(result.cube->channel_config.n_channels == 4);
+
+    // Each slot must carry its OWN filter's level, not another filter's and
+    // not zero. These are the four values write_mono_batch wrote.
+    for (const auto& fl : kLRGB) {
+        const int idx = result.cube->channel_config.slot_index(fl.filter);
+        INFO("slot " << fl.filter << " index " << idx);
+        REQUIRE(idx >= 0);
+        REQUIRE(result.stacked.at(8, 8, idx) == Catch::Approx(fl.value).margin(0.02f));
+    }
+}
+
+TEST_CASE("LRGB-mono: filters with different frame counts do not borrow "
+          "each other's frames", "[integration][lrgb]") {
+    // The asymmetric case is the one that would expose a shared frame set:
+    // if L's slot read R's cache it would see the wrong count as well as the
+    // wrong values. This is exactly the shape of the real M27 2025 corpus
+    // (L24 R12 G12 B24).
+    std::vector<std::string> paths;
+    for (const auto& p : write_mono_batch("asym_l", { { "L", 0.60f } }, 4))
+        paths.push_back(p);
+    for (const auto& p : write_mono_batch("asym_r", { { "R", 0.20f } }, 2))
+        paths.push_back(p);
+
+    StackingEngine engine(test_config());
+    auto result = engine.execute(paths, {}, nullptr);
+
+    INFO("error: " << result.error);
+    REQUIRE(result.ok);
+    REQUIRE(result.cube != nullptr);
+
+    const int li = result.cube->channel_config.slot_index("L");
+    const int ri = result.cube->channel_config.slot_index("R");
+    REQUIRE(li >= 0);
+    REQUIRE(ri >= 0);
+    REQUIRE(result.stacked.at(8, 8, li) == Catch::Approx(0.60f).margin(0.02f));
+    REQUIRE(result.stacked.at(8, 8, ri) == Catch::Approx(0.20f).margin(0.02f));
 }
 
 TEST_CASE("LRGB-mono: a single mono filter still stacks", "[integration][lrgb]") {
@@ -99,17 +139,22 @@ TEST_CASE("LRGB-mono: a single mono filter still stacks", "[integration][lrgb]")
 
 TEST_CASE("LRGB-mono: Phase A routes each filter into its own slot",
           "[integration][lrgb]") {
-    // Documents that the defect is downstream of routing: were Phase B able to
-    // read per-slot frames, the accumulators are already correct. Uses two
-    // filters and reaches into the cube before the guard would matter, so it
-    // is checked through the engine's Phase A products directly.
+    // Phase A was always innocent -- the per-slot Welford accumulators were
+    // correct even when Phase B could not read them. This pins that end to
+    // end now that the read path works too.
     auto paths = write_mono_batch("routing", { { "L", 0.60f }, { "R", 0.20f } }, 2);
     StackingEngine engine(test_config());
     auto result = engine.execute(paths, {}, nullptr);
 
-    // The guard fires, and that is the point: the cube is not produced, so the
-    // proof that routing works lives in the unit tests for ChannelConfig and
-    // the Phase A router. What this case pins is that two mono filters are
-    // enough to trip the guard -- it is not specific to four.
-    REQUIRE_FALSE(result.ok);
+    REQUIRE(result.ok);
+    REQUIRE(result.cube != nullptr);
+    REQUIRE(result.cube->channel_config.n_channels == 2);
+
+    const auto& vox = result.cube->at(8, 8);
+    const int li = result.cube->channel_config.slot_index("L");
+    const int ri = result.cube->channel_config.slot_index("R");
+    REQUIRE(vox.channel(li).welford.count() == 2);
+    REQUIRE(vox.channel(ri).welford.count() == 2);
+    REQUIRE(vox.channel(li).welford.mean == Catch::Approx(0.60f).margin(0.02f));
+    REQUIRE(vox.channel(ri).welford.mean == Catch::Approx(0.20f).margin(0.02f));
 }

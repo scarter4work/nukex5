@@ -43,10 +43,19 @@ public:
     /// Run the full Phase B pipeline on the cube.
     /// fitting_fn: called per-voxel to run distribution fitting (Ceres).
     ///   signature: void(SubcubeVoxel& voxel, const float* values,
-    ///                    const float* weights, int n_frames, int n_channels,
-    ///                    const FrameStats* frame_stats)
+    ///                    const float* weights, int stride, int n_channels,
+    ///                    const FrameStats* frame_stats,
+    ///                    const int* n_frames_per_channel)
+    ///
+    /// `stride` is the row length of `values`/`weights` (the batch's widest
+    /// frame set); `n_frames_per_channel[ch]` is how many of those entries
+    /// are real for that channel. They differ whenever two slots read
+    /// different caches -- an LRGB-mono batch with L24 R12 G12 B24 being the
+    /// motivating case. Fitting `stride` entries for a short channel would
+    /// average its samples against zero padding.
     using FittingFn = std::function<void(SubcubeVoxel&, const float*, const float*,
-                                          int, int, const FrameStats*)>;
+                                          int, int, const FrameStats*,
+                                          const int*)>;
 
     void execute_phase_b(
         Cube& cube,

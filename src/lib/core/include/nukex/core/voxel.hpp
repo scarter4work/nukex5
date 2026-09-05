@@ -94,13 +94,21 @@ struct SubcubeVoxel {
     void clear_flag(uint8_t flag)     { flags &= ~flag; }
 
 private:
+    // std::launder is required, not decorative: the bytes after this object
+    // were given their type by a placement-new elsewhere, and without it the
+    // compiler is entitled to assume this reinterpret_cast does not name
+    // those objects. No compiler exploits that today -- the E2E hashes are
+    // unchanged either way -- but the strict reading is worth closing, and
+    // construct_voxel now creates the channels as an ARRAY so that indexing
+    // the returned pointer is arithmetic within one complete object rather
+    // than across several.
     VoxelChannel* channels_() {
-        return reinterpret_cast<VoxelChannel*>(
-            reinterpret_cast<std::byte*>(this) + sizeof(SubcubeVoxel));
+        return std::launder(reinterpret_cast<VoxelChannel*>(
+            reinterpret_cast<std::byte*>(this) + sizeof(SubcubeVoxel)));
     }
     const VoxelChannel* channels_() const {
-        return reinterpret_cast<const VoxelChannel*>(
-            reinterpret_cast<const std::byte*>(this) + sizeof(SubcubeVoxel));
+        return std::launder(reinterpret_cast<const VoxelChannel*>(
+            reinterpret_cast<const std::byte*>(this) + sizeof(SubcubeVoxel)));
     }
 };
 
@@ -135,10 +143,22 @@ inline SubcubeVoxel* construct_voxel(void* storage, int n_channels) {
     auto* bytes = static_cast<std::byte*>(storage);
     auto* voxel = new (bytes) SubcubeVoxel();
     voxel->n_channels = static_cast<uint8_t>(n_channels);
-    auto* channels = reinterpret_cast<VoxelChannel*>(bytes + sizeof(SubcubeVoxel));
-    for (int c = 0; c < n_channels; c++) {
-        new (channels + c) VoxelChannel();
-    }
+    // Array placement-new writes an ABI "array cookie" before the first
+    // element for any type whose destructor is non-trivial, which would
+    // shift every channel and silently corrupt the record. VoxelChannel is
+    // trivially destructible, so no cookie is emitted -- asserted here so
+    // that adding a destructor to VoxelChannel fails the build instead of
+    // the stack.
+    static_assert(std::is_trivially_destructible<VoxelChannel>::value,
+                  "VoxelChannel must stay trivially destructible: array "
+                  "placement-new would otherwise emit a cookie and shift "
+                  "the channel records.");
+    // Created as an array, not one at a time: `channels_()[c]` is then
+    // indexing within a single complete object. Constructing them
+    // individually made every access for c >= 1 pointer arithmetic across
+    // separate complete objects, which is formally undefined even though it
+    // is the standard flexible-array-member idiom and works everywhere.
+    new (bytes + sizeof(SubcubeVoxel)) VoxelChannel[n_channels]();
     return voxel;
 }
 

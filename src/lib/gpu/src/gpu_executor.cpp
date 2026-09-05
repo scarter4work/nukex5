@@ -486,7 +486,9 @@ void GPUExecutor::execute_phase_b(
 
             std::vector<float> vals(n_channels * N);
             std::vector<float> wts(n_channels * N);
+            std::vector<int>   nf_ch(n_channels, 0);
             for (int ch = 0; ch < n_channels; ch++) {
+                nf_ch[ch] = static_cast<int>(buf.n_frames[ch * count + vi]);
                 for (int fi = 0; fi < N; fi++) {
                     vals[ch * N + fi] = buf.pixel_values[ch * N * count + fi * count + vi];
                     wts[ch * N + fi] = buf.pixel_weights[ch * N * count + fi * count + vi];
@@ -494,7 +496,7 @@ void GPUExecutor::execute_phase_b(
             }
 
             fitting_fn(voxel, vals.data(), wts.data(), N,
-                        n_channels, frame_stats.data());
+                        n_channels, frame_stats.data(), nf_ch.data());
 
             hb.tick(omp_get_thread_num(), obs);
         }

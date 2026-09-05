@@ -408,24 +408,6 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         return err;
     }
 
-    if (bayer == BayerPattern::NONE && n_ch > 1) {
-        std::string slots;
-        for (int i = 0; i < n_ch; i++) {
-            if (i) slots += ", ";
-            slots += ch_config.slot_name(i);
-        }
-        ExecuteResult err{};
-        err.ok    = false;
-        err.error = "This batch carries " + std::to_string(n_ch) +
-                    " mono filters (" + slots + "). NukeX cannot yet keep their "
-                    "frames apart in Phase B -- every mono frame shares one "
-                    "frame cache, so only one filter's data would survive and "
-                    "the other channels would come out empty. Stack each mono "
-                    "filter separately for now and combine the results.";
-        obs.message(err.error);
-        return err;
-    }
-
     // Allocate cube
     Cube cube(out_width, out_height, ch_config);
     {
@@ -456,8 +438,9 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // slot_cache_refs (built below after Phase A) instead of indexing the
     // cache directly by cube slot index.
     std::map<CacheSig, FrameCache> caches;
-    auto get_or_create_cache = [&](int w, int h, int n_ch) -> FrameCache& {
-        CacheSig sig{w, h, n_ch};
+    auto get_or_create_cache = [&](int w, int h, int n_ch,
+                                   const std::string& routing_key) -> FrameCache& {
+        CacheSig sig{w, h, n_ch, routing_key};
         auto it = caches.find(sig);
         if (it == caches.end()) {
             it = caches.emplace(
@@ -731,9 +714,18 @@ StackingEngine::ExecuteResult StackingEngine::execute(
 
         // 5. Cache aligned frame into the geometry-matched cache.
         obs.advance(0, "  caching");
+        // A single-channel frame is routed by its slot, so each mono filter
+        // gets its own cache and Phase B can read only that filter's frames.
+        // Multi-channel frames serve several slots by channel index from one
+        // cache, which was always correct, so they share the empty key.
+        const std::string routing_key =
+            (aligned.image.n_channels() == 1 && !per_frame_cfg.channel_names[0].empty())
+                ? per_frame_cfg.channel_names[0]
+                : std::string();
         get_or_create_cache(aligned.image.width(),
                             aligned.image.height(),
-                            aligned.image.n_channels()).write_frame(aligned.image, f);
+                            aligned.image.n_channels(),
+                            routing_key).write_frame(aligned.image, f);
 
         // 6. Frame-level stats
         float frame_median = compute_frame_median(aligned.image);
@@ -962,25 +954,17 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // Grab commonly needed cache pointers once — avoids re-scanning the map
     // per slot.
     const FrameCache* cache_3ch = nullptr; // first 3-channel (OSC) cache
-    const FrameCache* cache_1ch = nullptr; // first 1-channel (mono) cache
+    // Mono caches are now keyed by the slot they route into, so each filter
+    // has its own and a slot can read only its own frames.
+    std::map<std::string, const FrameCache*> mono_cache_by_slot;
     for (auto& [sig, c] : caches) {
         if (std::get<2>(sig) == 3 && cache_3ch == nullptr) cache_3ch = &c;
-        if (std::get<2>(sig) == 1 && cache_1ch == nullptr) cache_1ch = &c;
+        if (std::get<2>(sig) == 1) mono_cache_by_slot.emplace(std::get<3>(sig), &c);
     }
-
-    // Up-front count of mono R/G/B slots in this cube — needed to
-    // distinguish a single-color mono batch (safe to route slot 0 → cache
-    // ch 0) from a mixed mono-R + mono-G + mono-B batch (where the std::map
-    // collapses three same-shape (W,H,1) caches into one; routing all three
-    // slots to ch=0 would silently mix per-frame R/G/B values across slots).
-    // TASK-11-MONO-RGB will add per-filter cache tracking so the mixed case
-    // can use full Phase B stats; until then we leave cache=nullptr in that
-    // case so distribution fitting falls back loud-fail to welford-only.
-    int rgb_mono_slot_count = 0;
-    for (int j = 0; j < n_slots; ++j) {
-        const std::string& nm = cube.channel_config.slot_name(j);
-        if (nm == "R" || nm == "G" || nm == "B") ++rgb_mono_slot_count;
-    }
+    auto mono_cache_for = [&](const std::string& slot) -> const FrameCache* {
+        auto it = mono_cache_by_slot.find(slot);
+        return it == mono_cache_by_slot.end() ? nullptr : it->second;
+    };
 
     for (int slot_i = 0; slot_i < n_slots; ++slot_i) {
         const std::string& name = cube.channel_config.slot_name(slot_i);
@@ -988,9 +972,9 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         if (name == "L") {
             // Two cases: raw mono-L filter (1ch cache) or BROADBAND_OSC
             // synthesised L (3ch cache, no raw L in cache).
-            if (cache_1ch != nullptr) {
-                // Raw L filter: direct read from channel 0 of the mono cache.
-                slot_cache_refs[slot_i] = {cache_1ch, 0, SlotSynthesis::DIRECT};
+            if (const FrameCache* mono_L = mono_cache_for("L")) {
+                // Raw L filter: direct read from channel 0 of L's own cache.
+                slot_cache_refs[slot_i] = {mono_L, 0, SlotSynthesis::DIRECT};
             } else if (cache_3ch != nullptr) {
                 // BROADBAND_OSC synthesised L: derive 0.299R+0.587G+0.114B at
                 // read time. Same formula as Phase A's voxel accumulation — keeps
@@ -1007,18 +991,12 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             int cache_ch_target = (name == "R") ? 0 : (name == "G") ? 1 : 2;
             if (cache_3ch != nullptr) {
                 slot_cache_refs[slot_i] = {cache_3ch, cache_ch_target, SlotSynthesis::DIRECT};
-            } else if (cache_1ch != nullptr && rgb_mono_slot_count <= 1) {
-                // Single-color mono batch (only one of R/G/B present in the
-                // cube): the lone 1ch cache carries that color, slot 0 →
-                // cache ch 0. Safe.
-                slot_cache_refs[slot_i] = {cache_1ch, 0, SlotSynthesis::DIRECT};
+            } else if (const FrameCache* mono = mono_cache_for(name)) {
+                // Mono R, G or B filter. Each has its own cache now, keyed on
+                // the slot it routes into, so three mono colour filters no
+                // longer collapse into one file and read each other's frames.
+                slot_cache_refs[slot_i] = {mono, 0, SlotSynthesis::DIRECT};
             }
-            // TASK-11-MONO-RGB: mixed mono-R + mono-G + mono-B batches collapse
-            // into a single (W,H,1) cache via std::map<CacheSig,...>; routing
-            // all three slots to ch=0 of that cache would mix per-frame values.
-            // Leaving cache=nullptr here forces Phase B to use welford-only
-            // stats for these slots — correct (if coarser) until per-filter
-            // cache tracking lands.
 
         } else if (name.size() >= 2 &&
                    (name[0] == 'R' || name[0] == 'G' || name[0] == 'B') &&
@@ -1034,9 +1012,9 @@ StackingEngine::ExecuteResult StackingEngine::execute(
 
         } else {
             // NARROWBAND_SINGLE: "Ha", "OIII", "SII", or any future mono slot.
-            // These come from mono frames → 1ch cache, channel 0.
-            if (cache_1ch != nullptr) {
-                slot_cache_refs[slot_i] = {cache_1ch, 0, SlotSynthesis::DIRECT};
+            // Each comes from its own mono cache, channel 0.
+            if (const FrameCache* mono = mono_cache_for(name)) {
+                slot_cache_refs[slot_i] = {mono, 0, SlotSynthesis::DIRECT};
             }
         }
     }
@@ -1065,17 +1043,29 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // kernels 1+2 complete. Runs the Ceres-based model selection cascade.
     auto fitting_fn = [&fitter](SubcubeVoxel& voxel,
                                  const float* values, const float* weights,
-                                 int nf, int nc,
-                                 const FrameStats* /*fs*/) {
+                                 int stride, int nc,
+                                 const FrameStats* /*fs*/,
+                                 const int* nf_ch) {
         for (int ch = 0; ch < nc; ch++) {
-            fitter.select(values + ch * nf, weights + ch * nf, nf, voxel, ch);
+            // stride addresses the row; nf_ch[ch] says how much of it is
+            // real. Fitting the whole row would average a short channel's
+            // samples against zero padding -- on an L24/R12 batch that
+            // halved R.
+            const int n = nf_ch ? nf_ch[ch] : stride;
+            if (n <= 0) continue;
+            fitter.select(values + ch * stride, weights + ch * stride, n, voxel, ch);
         }
     };
 
-    // All caches are written in lockstep (one frame per cache per iteration),
-    // so any cache's n_frames_written() gives the correct count for Phase B.
-    int n_frames_written = caches.empty() ? 0
-                         : caches.begin()->second.n_frames_written();
+    // The WIDEST frame set in the batch. Caches are no longer written in
+    // lockstep -- each mono filter has its own and holds only its own frames
+    // -- so this is the buffer stride, not a count. Each channel's real count
+    // comes from its own cache via ShadowBuffers::n_frames. Taking the first
+    // cache's count instead would size the buffers to whichever filter sorted
+    // first and silently truncate every longer one.
+    int n_frames_written = 0;
+    for (const auto& [sig, c] : caches)
+        n_frames_written = std::max(n_frames_written, c.n_frames_written());
 
     auto phase_b_start = std::chrono::steady_clock::now();
     gpu.execute_phase_b(cube, slot_cache_refs, n_frames_written,

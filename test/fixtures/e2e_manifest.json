@@ -68,8 +68,9 @@
       "wall_time_budget_s": 3600,
       "min_frames_ok_alignment": 51,
       "alignment_note": "51 of 72 measured 2026-09-04. The 21 failures are the two temporal ends of a 7-hour session: chronological frames 0-19 and 66-71. Failure rate rises monotonically with distance from the reference (0-15 frames away: 31 ok / 0 failed; 32-39 away: 0 ok / 9 failed), and the reference is already the temporal midpoint, so this is cumulative tracking drift the single-reference matcher cannot bridge -- not filter, and not reference selection, which took this case from 1 of 72 to 51 of 72. Raise this floor when chained alignment lands.",
-      "skip": true,
-      "skip_reason": "Multi-filter mono batches are refused by the engine. FrameCache is keyed on post-debayer geometry, so every mono frame shares one cache and Phase B cannot read a given slot's own frames -- one slot fits a mixture of all four filters and the rest fit zeros. Measured 2026-09-04: one populated channel of four. Re-enable when Phase B carries a per-slot frame set. Reference selection already took this corpus from 1 of 72 frames aligned to 51 of 72; the remaining 21 are cumulative drift at the two ends of a seven-hour session, which is why min_frames_ok_alignment is 51 and not 72."
+      "skip": false,
+      "skip_reason": "",
+      "note": "Re-enabled 2026-09-05. Phase B now carries a per-channel frame set: CacheSig gained a routing key so each mono filter gets its own cache, ShadowBuffers::n_frames is per channel, and global_frame_of maps each channel's local slot to the batch-global frame its FrameStats belong to. The golden for this case has never existed -- the previous one was deleted because it recorded three empty channels -- so it is generated fresh in this re-baseline."
     },
     {
       "name": "bayer_nb_s2o3_placeholder",
