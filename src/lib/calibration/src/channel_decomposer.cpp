@@ -26,13 +26,13 @@ Eigen::MatrixXd ChannelDecomposer::build_q(const std::string& camera,
     }
 
     // Singularity check via rank. A rank-deficient Q means the QE values at
-    // the chosen line wavelengths don't form a non-degenerate basis — usually
+    // the chosen line wavelengths don't form a non-degenerate basis -- usually
     // because a buggy or fudged DB entry has identical R/G/B values. Loud
     // failure beats a silently nonsensical least-squares answer.
     Eigen::FullPivLU<Eigen::MatrixXd> lu(Q);
     if (lu.rank() < n_lines) {
         throw SingularQError("Q matrix for (" + camera + ", " + filter_name +
-                             ") is singular — QE values must form a non-degenerate basis. " +
+                             ") is singular -- QE values must form a non-degenerate basis. " +
                              "Filter QE in DB is suspect. Report bug + check override.");
     }
 

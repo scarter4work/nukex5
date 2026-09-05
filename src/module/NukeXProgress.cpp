@@ -114,7 +114,7 @@ void NukeXProgress::begin_phase( const std::string& name, int total_steps )
    {
       // Outermost phase drives the progress bar
       console_.WriteLn( String( "<end><cbr>" ) );
-      console_.WriteLn( String().Format( "\xe2\x95\x90\xe2\x95\x90\xe2\x95\x90 %s (%d steps) \xe2\x95\x90\xe2\x95\x90\xe2\x95\x90",
+      console_.WriteLn( String().Format( "=== %s (%d steps) ===",
                                          name.c_str(), total_steps ) );
       monitor_.SetCallback( &status_ );
       monitor_.Initialize( String( name.c_str() ), total_steps );
