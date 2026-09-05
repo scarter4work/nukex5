@@ -10,11 +10,12 @@ __kernel void select_pixels(
     __global const float*   dist_true_signal,   // [C * B]
     __global const float*   pixel_values,       // [C * N * B]
     __global const float*   pixel_weights,      // [C * N * B]
-    __global const ushort*  n_frames_in,        // [B]
+    __global const ushort*  n_frames_in,        // [C * B]
     // Frame-level noise model
-    __global const float*   frame_read_noise,   // [N]
-    __global const float*   frame_gain,         // [N]
-    __global const uchar*   frame_has_noise_kw, // [N]
+    // Per CHANNEL: see classify_weights.cl.
+    __global const float*   frame_read_noise,   // [C * N]
+    __global const float*   frame_gain,         // [C * N]
+    __global const uchar*   frame_has_noise_kw, // [C * N]
     // Welford variance for fallback
     __global const float*   welford_M2,         // [C * B]
     __global const uint*    welford_n,          // [C * B]
@@ -36,7 +37,7 @@ __kernel void select_pixels(
     int ch = gid / B;
     if (ch >= C || vi >= B) return;
 
-    int nf = (int)n_frames_in[vi];
+    int nf = (int)n_frames_in[ch * B + vi];
     float out_val = dist_true_signal[ch * B + vi];
 
     // Compute welford variance for fallback
@@ -55,9 +56,9 @@ __kernel void select_pixels(
         float value = pixel_values[ch * N * B + fi * B + vi];
 
         float sigma2;
-        if (frame_has_noise_kw[fi]) {
-            float g = max(frame_gain[fi], 1.0e-10f);
-            float rn = frame_read_noise[fi];
+        if (frame_has_noise_kw[ch * N + fi]) {
+            float g = max(frame_gain[ch * N + fi], 1.0e-10f);
+            float rn = frame_read_noise[ch * N + fi];
             float value_adu = value * 65535.0f;
             float shot_var = value_adu / g;
             float read_var = (rn * rn) / (g * g);

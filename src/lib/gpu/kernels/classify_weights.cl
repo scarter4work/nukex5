@@ -12,12 +12,14 @@ __kernel void classify_weights(
     __global const float*   welford_M2,         // [C * B]
     __global const uint*    welford_n,          // [C * B]
     __global const float*   pixel_values,       // [C * N * B]
-    __global const ushort*  n_frames_in,        // [B]
+    __global const ushort*  n_frames_in,        // [C * B]
     // Frame-level constants (read-only, shared across all work-items)
-    __global const float*   frame_weight,       // [N]
-    __global const float*   psf_weight,         // [N]
-    __global const float*   cloud_score,        // [N]
-    __global const float*   frame_exposure,     // [N]
+    // Per CHANNEL now: two slots can read different caches with different
+    // frame sets, so a frame's stats are found from (channel, local slot).
+    __global const float*   frame_weight,       // [C * N]
+    __global const float*   psf_weight,         // [C * N]
+    __global const float*   cloud_score,        // [C * N]
+    __global const float*   frame_exposure,     // [C * N]
     // WeightConfig scalars
     float sigma_threshold,
     float sigma_scale,
@@ -41,8 +43,10 @@ __kernel void classify_weights(
     int B = batch_size;
     int N = max_frames;
     int C = n_channels;
-    int nf = (int)n_frames_in[vi];
-    if (nf == 0) return;
+    int nf_any = 0;
+    for (int ch = 0; ch < C; ch++)
+        nf_any = max(nf_any, (int)n_frames_in[ch * B + vi]);
+    if (nf_any == 0) return;
 
     float worst_sigma = 0.0f;
     float best_sigma = 1.0e30f;
@@ -54,6 +58,7 @@ __kernel void classify_weights(
     float inv_sigma_scale2 = 0.5f / (sigma_scale * sigma_scale);
 
     for (int ch = 0; ch < C; ch++) {
+        int nf = (int)n_frames_in[ch * B + vi];
         float w_mean = welford_mean[ch * B + vi];
         float w_M2   = welford_M2[ch * B + vi];
         uint  w_n    = welford_n[ch * B + vi];
@@ -64,7 +69,7 @@ __kernel void classify_weights(
         for (int fi = 0; fi < nf; fi++) {
             float value = pixel_values[ch * N * B + fi * B + vi];
 
-            float w = frame_weight[fi] * psf_weight[fi];
+            float w = frame_weight[ch * N + fi] * psf_weight[ch * N + fi];
 
             if (stddev > 1.0e-30f) {
                 float sigma_score = fabs(value - w_mean) / stddev;
@@ -78,15 +83,15 @@ __kernel void classify_weights(
                 }
             }
 
-            w *= cloud_score[fi];
+            w *= cloud_score[ch * N + fi];
             w = max(w, weight_floor);
 
             pixel_weights_out[ch * N * B + fi * B + vi] = w;
 
             if (ch == 0) {
                 weight_sum += w;
-                total_exp += frame_exposure[fi];
-                if (cloud_score[fi] < 0.5f) cloud_count++;
+                total_exp += frame_exposure[ch * N + fi];
+                if (cloud_score[ch * N + fi] < 0.5f) cloud_count++;
             }
         }
     }
@@ -95,6 +100,9 @@ __kernel void classify_weights(
     trail_count_out[vi] = trail_count;
     worst_sigma_out[vi] = worst_sigma;
     best_sigma_out[vi]  = (best_sigma < 1.0e29f) ? best_sigma : 0.0f;
-    mean_weight_out[vi] = (nf > 0) ? weight_sum / (float)nf : 0.0f;
+    // Summaries accumulate from channel 0 only, so the divisor is channel
+    // 0's own count.
+    int nf0 = (int)n_frames_in[0 * B + vi];
+    mean_weight_out[vi] = (nf0 > 0) ? weight_sum / (float)nf0 : 0.0f;
     total_exposure_out[vi] = total_exp;
 }

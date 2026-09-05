@@ -10,7 +10,7 @@
 
 __kernel void robust_stats(
     __global const float*   pixel_values,       // [C * N * B]
-    __global const ushort*  n_frames_in,        // [B]
+    __global const ushort*  n_frames_in,        // [C * B]
     int n_channels,
     int max_frames,
     int batch_size,
@@ -27,7 +27,8 @@ __kernel void robust_stats(
     int ch = gid / B;
     if (ch >= C || vi >= B) return;
 
-    int nf = (int)n_frames_in[vi];
+    // Per-channel: a slot reading its own cache has its own count.
+    int nf = (int)n_frames_in[ch * B + vi];
     if (nf < 2) {
         mad_out[ch * B + vi] = 0.0f;
         biweight_midvar_out[ch * B + vi] = 0.0f;

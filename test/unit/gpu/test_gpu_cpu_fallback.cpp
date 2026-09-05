@@ -15,7 +15,12 @@ static void fill_synthetic(ShadowBuffers& buf, int B, int C, int N,
     std::normal_distribution<float> gauss(0.5f, 0.05f);
 
     for (int vi = 0; vi < B; vi++) {
-        buf.n_frames[vi] = static_cast<uint16_t>(N);
+        // n_frames is [C * B] now -- one count per channel, because two
+        // slots can read different caches with different frame sets. Setting
+        // only [vi] would leave every channel above 0 with zero frames and
+        // quietly stop testing them.
+        for (int ch = 0; ch < C; ch++)
+            buf.n_frames[ch * B + vi] = static_cast<uint16_t>(N);
 
         for (int ch = 0; ch < C; ch++) {
             // Synthetic Welford accumulators
@@ -159,7 +164,7 @@ TEST_CASE("CPU Fallback: robust_stats MAD matches reference", "[gpu][fallback]")
     ShadowBuffers buf;
     buf.allocate(B, C, N);
 
-    buf.n_frames[0] = 5;
+    for (int ch = 0; ch < C; ch++) buf.n_frames[ch * B + 0] = 5;
     float vals[] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
     for (int fi = 0; fi < 5; fi++)
         buf.pixel_values[fi * B + 0] = vals[fi] / 10.0f;  // Normalize to [0,1]
@@ -287,7 +292,8 @@ void fill_dist_inputs(ShadowBuffers& buf, int B, int C) {
 // (batch Bd, voxel di), re-striding as it goes.
 void copy_voxel_inputs(const ShadowBuffers& src, int Bs, int si,
                        ShadowBuffers& dst, int Bd, int di, int C, int N) {
-    dst.n_frames[di] = src.n_frames[si];
+    for (int ch = 0; ch < C; ch++)
+        dst.n_frames[ch * Bd + di] = src.n_frames[ch * Bs + si];
     for (int ch = 0; ch < C; ch++) {
         dst.welford_mean[ch * Bd + di] = src.welford_mean[ch * Bs + si];
         dst.welford_M2  [ch * Bd + di] = src.welford_M2  [ch * Bs + si];

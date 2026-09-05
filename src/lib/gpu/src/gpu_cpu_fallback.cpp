@@ -40,8 +40,11 @@ void GPUCPUFallback::classify_weights(
     int C = n_channels;
 
     for (int vi = 0; vi < B; vi++) {
-        int nf = buf.n_frames[vi];
-        if (nf == 0) continue;
+        // Per-channel frame counts: two slots can read different caches with
+        // different frame sets, so there is no single count for the voxel.
+        int nf_any = 0;
+        for (int ch = 0; ch < C; ch++) nf_any = std::max(nf_any, (int)buf.n_frames[ch * B + vi]);
+        if (nf_any == 0) continue;
 
         float worst_sigma = 0.0f;
         float best_sigma = 1e30f;
@@ -51,6 +54,7 @@ void GPUCPUFallback::classify_weights(
         uint16_t trail_count = 0;
 
         for (int ch = 0; ch < C; ch++) {
+            const int nf = buf.n_frames[ch * B + vi];
             // Welford stats for this voxel-channel
             float w_mean = buf.welford_mean[ch * B + vi];
             float w_M2   = buf.welford_M2[ch * B + vi];
@@ -63,7 +67,11 @@ void GPUCPUFallback::classify_weights(
                 float value = buf.pixel_values[ch * N * B + fi * B + vi];
 
                 // Weight computation (mirrors weight_computer.cpp)
-                float w = frame_stats[fi].frame_weight * frame_stats[fi].psf_weight;
+                const int gf = buf.global_frame_of.empty()
+                             ? fi : buf.global_frame_of[ch * N + fi];
+                if (gf < 0) continue;   // this channel has no frame here
+                const FrameStats& fst = frame_stats[gf];
+                float w = fst.frame_weight * fst.psf_weight;
 
                 if (stddev > 1e-30f) {
                     float sigma_score = std::fabs(value - w_mean) / stddev;
@@ -79,7 +87,7 @@ void GPUCPUFallback::classify_weights(
                     }
                 }
 
-                w *= frame_stats[fi].cloud_score;
+                w *= fst.cloud_score;
                 w = std::max(w, config.weight_floor);
 
                 buf.pixel_weights[ch * N * B + fi * B + vi] = w;
@@ -87,8 +95,8 @@ void GPUCPUFallback::classify_weights(
                 // Accumulate summaries from channel 0
                 if (ch == 0) {
                     weight_sum += w;
-                    total_exp += frame_stats[fi].exposure;
-                    if (frame_stats[fi].cloud_score < 0.5f) cloud_count++;
+                    total_exp += fst.exposure;
+                    if (fst.cloud_score < 0.5f) cloud_count++;
                 }
             }
         }
@@ -97,7 +105,12 @@ void GPUCPUFallback::classify_weights(
         buf.trail_frame_count[vi] = trail_count;
         buf.worst_sigma_score[vi] = worst_sigma;
         buf.best_sigma_score[vi]  = (best_sigma < 1e29f) ? best_sigma : 0.0f;
-        buf.mean_weight_out[vi]   = (nf > 0) ? weight_sum / static_cast<float>(nf) : 0.0f;
+        // weight_sum, total_exp and the counts are accumulated from channel 0
+        // only (see the `if (ch == 0)` guard above), so the divisor is
+        // channel 0's own frame count -- not the voxel's, which no longer
+        // exists as a single number.
+        const int nf0 = buf.n_frames[0 * B + vi];
+        buf.mean_weight_out[vi]   = (nf0 > 0) ? weight_sum / static_cast<float>(nf0) : 0.0f;
         buf.total_exposure_out[vi] = total_exp;
     }
 }
@@ -115,17 +128,17 @@ void GPUCPUFallback::robust_stats(
     int C = n_channels;
 
     for (int vi = 0; vi < B; vi++) {
-        int nf = buf.n_frames[vi];
-        if (nf < 2) {
-            for (int ch = 0; ch < C; ch++) {
+        for (int ch = 0; ch < C; ch++) {
+            // Per-channel frame count: a channel with fewer than two samples
+            // has no spread to measure, and that is now a per-channel
+            // question rather than a per-voxel one.
+            const int nf = buf.n_frames[ch * B + vi];
+            if (nf < 2) {
                 buf.mad_out[ch * B + vi] = 0.0f;
                 buf.biweight_midvar_out[ch * B + vi] = 0.0f;
                 buf.iqr_out[ch * B + vi] = 0.0f;
+                continue;
             }
-            continue;
-        }
-
-        for (int ch = 0; ch < C; ch++) {
             // Collect values for this voxel-channel
             float vals[GPU_MAX_FRAMES];
             float sorted[GPU_MAX_FRAMES];
@@ -192,9 +205,8 @@ void GPUCPUFallback::select_pixels(
     int C = n_channels;
 
     for (int vi = 0; vi < B; vi++) {
-        int nf = buf.n_frames[vi];
-
         for (int ch = 0; ch < C; ch++) {
+            const int nf = buf.n_frames[ch * B + vi];
             float out_val = buf.dist_true_signal[ch * B + vi];
 
             // Noise propagation (mirrors pixel_selector.cpp)
@@ -214,9 +226,13 @@ void GPUCPUFallback::select_pixels(
 
                 // CCD noise model or Welford fallback
                 float sigma2;
-                if (frame_stats[fi].has_noise_keywords) {
-                    float g = std::max(frame_stats[fi].gain, 1e-10f);
-                    float rn = frame_stats[fi].read_noise;
+                const int gf = buf.global_frame_of.empty()
+                             ? fi : buf.global_frame_of[ch * N + fi];
+                if (gf < 0) continue;
+                const FrameStats& fst = frame_stats[gf];
+                if (fst.has_noise_keywords) {
+                    float g = std::max(fst.gain, 1e-10f);
+                    float rn = fst.read_noise;
                     float value_adu = value * 65535.0f;
                     float shot_var = value_adu / g;
                     float read_var = (rn * rn) / (g * g);

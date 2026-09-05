@@ -19,7 +19,10 @@ void ShadowBuffers::allocate(int bs, int nc, int mf) {
     welford_M2.resize(C * B, 0.0f);
     welford_n.resize(C * B, 0);
     pixel_values.resize(C * N * B, 0.0f);
-    n_frames.resize(B, 0);
+    n_frames.resize(C * B, 0);
+    // Deliberately NOT sized here. extract_from_cube builds it from the slot
+    // refs; leaving it empty is the signal that the kernels are being driven
+    // directly (unit tests), where a local slot index IS the global frame.
 
     // Intermediate
     pixel_weights.resize(C * N * B, 0.0f);
@@ -58,13 +61,16 @@ void ShadowBuffers::extract_from_cube(
     int N = max_frames;
     int w = cube.width;
 
+    // Built here rather than by the caller so there is no ordering hazard:
+    // the kernels cannot see pixel_values without also seeing the map that
+    // says which global frame each local slot came from.
+    map_frames(slot_refs, C);
+
     for (int vi = 0; vi < B; vi++) {
         int voxel_idx = start_voxel + vi;
         int px = voxel_idx % w;
         int py = voxel_idx / w;
         const auto& voxel = cube.at(px, py);
-
-        n_frames[vi] = voxel.n_frames;
 
         for (int ch = 0; ch < C; ch++) {
             welford_mean[ch * B + vi] = voxel.channel(ch).welford.mean;
@@ -101,11 +107,27 @@ void ShadowBuffers::extract_from_cube(
                 }
             }
 
-            int n_copy = std::min(nf_read, std::min(static_cast<int>(voxel.n_frames), N));
+            // The channel's own frame count, not the voxel's. They differ
+            // whenever two slots read different caches.
+            int n_copy = std::min(nf_read, N);
             for (int fi = 0; fi < n_copy; fi++) {
                 pixel_values[ch * N * B + fi * B + vi] = frame_vals[fi];
             }
+            n_frames[ch * B + vi] = static_cast<uint16_t>(n_copy);
         }
+    }
+}
+
+void ShadowBuffers::map_frames(const std::vector<ChannelCacheRef>& slot_refs,
+                               int nc) {
+    const int C = nc, N = max_frames;
+    global_frame_of.assign(C * N, -1);
+    for (int ch = 0; ch < C && ch < static_cast<int>(slot_refs.size()); ch++) {
+        const ChannelCacheRef& ref = slot_refs[ch];
+        if (ref.cache == nullptr) continue;
+        const int n = std::min(ref.cache->n_frames_written(), N);
+        for (int fi = 0; fi < n; fi++)
+            global_frame_of[ch * N + fi] = ref.cache->global_frame(fi);
     }
 }
 

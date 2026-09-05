@@ -79,29 +79,42 @@ void GPUExecutor::execute_batch_gpu(
     cl_mem d_pixel_values = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
         C * N * B * sizeof(float), buf.pixel_values.data());
     cl_mem d_n_frames = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        B * sizeof(uint16_t), buf.n_frames.data());
+        C * B * sizeof(uint16_t), buf.n_frames.data());
 
     // Frame-level constants
-    std::vector<float> frame_weight(N), psf_weight(N), cloud_score(N), frame_exposure(N);
-    std::vector<float> frame_read_noise(N), frame_gain(N);
-    std::vector<uint8_t> frame_has_noise(N);
-    for (int i = 0; i < N; i++) {
-        frame_weight[i] = fs[i].frame_weight;
-        psf_weight[i] = fs[i].psf_weight;
-        cloud_score[i] = fs[i].cloud_score;
-        frame_exposure[i] = fs[i].exposure;
-        frame_read_noise[i] = fs[i].read_noise;
-        frame_gain[i] = fs[i].gain;
-        frame_has_noise[i] = fs[i].has_noise_keywords ? 1 : 0;
+    // Staged per CHANNEL: buf.global_frame_of maps (channel, local slot) to
+    // the batch-global frame whose FrameStats apply. Channels read different
+    // caches now, so a single [N] array cannot describe the batch.
+    std::vector<float> frame_weight(C * N, 0.0f), psf_weight(C * N, 0.0f),
+                       cloud_score(C * N, 0.0f), frame_exposure(C * N, 0.0f);
+    std::vector<float> frame_read_noise(C * N, 0.0f), frame_gain(C * N, 1.0f);
+    std::vector<uint8_t> frame_has_noise(C * N, 0);
+    for (int ch = 0; ch < C; ch++) {
+        for (int fi = 0; fi < N; fi++) {
+            const int idx = ch * N + fi;
+            // -1 means this channel has no frame at that local slot; leave
+            // the staged entry neutral. buf.global_frame_of is empty only in
+            // tests that drive the kernels directly, where local == global.
+            const int gf = buf.global_frame_of.empty()
+                         ? fi : buf.global_frame_of[idx];
+            if (gf < 0) continue;
+            frame_weight[idx]     = fs[gf].frame_weight;
+            psf_weight[idx]       = fs[gf].psf_weight;
+            cloud_score[idx]      = fs[gf].cloud_score;
+            frame_exposure[idx]   = fs[gf].exposure;
+            frame_read_noise[idx] = fs[gf].read_noise;
+            frame_gain[idx]       = fs[gf].gain;
+            frame_has_noise[idx]  = fs[gf].has_noise_keywords ? 1 : 0;
+        }
     }
     cl_mem d_frame_weight = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        N * sizeof(float), frame_weight.data());
+        C * N * sizeof(float), frame_weight.data());
     cl_mem d_psf_weight = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        N * sizeof(float), psf_weight.data());
+        C * N * sizeof(float), psf_weight.data());
     cl_mem d_cloud_score = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        N * sizeof(float), cloud_score.data());
+        C * N * sizeof(float), cloud_score.data());
     cl_mem d_frame_exposure = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        N * sizeof(float), frame_exposure.data());
+        C * N * sizeof(float), frame_exposure.data());
 
     // Output/intermediate buffers
     cl_mem d_pixel_weights = create_buf(ctx, CL_MEM_READ_WRITE,
@@ -226,13 +239,21 @@ void GPUExecutor::execute_select_gpu(
     cl_command_queue queue = context_.queue();
     int B = batch_size, C = n_channels, N = n_frames;
 
-    // Prepare frame-level noise model arrays
-    std::vector<float> frame_read_noise(N), frame_gain(N);
-    std::vector<uint8_t> frame_has_noise(N);
-    for (int i = 0; i < N; i++) {
-        frame_read_noise[i] = fs[i].read_noise;
-        frame_gain[i] = fs[i].gain;
-        frame_has_noise[i] = fs[i].has_noise_keywords ? 1 : 0;
+    // Prepare frame-level noise model arrays, per CHANNEL: each slot reads
+    // its own cache, so a local slot index means a different batch-global
+    // frame in different channels. buf.global_frame_of carries that map.
+    std::vector<float> frame_read_noise(C * N, 0.0f), frame_gain(C * N, 1.0f);
+    std::vector<uint8_t> frame_has_noise(C * N, 0);
+    for (int ch = 0; ch < C; ch++) {
+        for (int fi = 0; fi < N; fi++) {
+            const int idx = ch * N + fi;
+            const int gf = buf.global_frame_of.empty()
+                         ? fi : buf.global_frame_of[idx];
+            if (gf < 0) continue;
+            frame_read_noise[idx] = fs[gf].read_noise;
+            frame_gain[idx]       = fs[gf].gain;
+            frame_has_noise[idx]  = fs[gf].has_noise_keywords ? 1 : 0;
+        }
     }
 
     // Create GPU buffers
@@ -243,13 +264,13 @@ void GPUExecutor::execute_select_gpu(
     cl_mem d_pixel_weights = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
         C * N * B * sizeof(float), buf.pixel_weights.data());
     cl_mem d_n_frames = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        B * sizeof(uint16_t), buf.n_frames.data());
+        C * B * sizeof(uint16_t), buf.n_frames.data());
     cl_mem d_read_noise = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        N * sizeof(float), frame_read_noise.data());
+        C * N * sizeof(float), frame_read_noise.data());
     cl_mem d_gain = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        N * sizeof(float), frame_gain.data());
+        C * N * sizeof(float), frame_gain.data());
     cl_mem d_has_noise = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-        N * sizeof(uint8_t), frame_has_noise.data());
+        C * N * sizeof(uint8_t), frame_has_noise.data());
     cl_mem d_welford_M2 = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
         C * B * sizeof(float), buf.welford_M2.data());
     cl_mem d_welford_n = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,

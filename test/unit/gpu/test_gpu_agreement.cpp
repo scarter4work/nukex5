@@ -20,7 +20,12 @@ static void fill_synthetic(ShadowBuffers& buf, int B, int C, int N,
                             std::mt19937& rng) {
     std::normal_distribution<float> gauss(0.5f, 0.05f);
     for (int vi = 0; vi < B; vi++) {
-        buf.n_frames[vi] = static_cast<uint16_t>(N);
+        // n_frames is [C * B] now -- one count per channel, because two
+        // slots can read different caches with different frame sets. Setting
+        // only [vi] would leave every channel above 0 with zero frames and
+        // quietly stop testing them.
+        for (int ch = 0; ch < C; ch++)
+            buf.n_frames[ch * B + vi] = static_cast<uint16_t>(N);
         for (int ch = 0; ch < C; ch++) {
             float sum = 0.0f;
             for (int fi = 0; fi < N; fi++) {

@@ -33,7 +33,15 @@ struct ShadowBuffers {
     std::vector<float>    welford_M2;       // [n_ch * batch]
     std::vector<uint32_t> welford_n;        // [n_ch * batch]
     std::vector<float>    pixel_values;     // [n_ch * max_frames * batch]
-    std::vector<uint16_t> n_frames;         // [batch]
+    std::vector<uint16_t> n_frames;         // [n_ch * batch]
+    /// Batch-global frame index for each (channel, local slot), or -1 where
+    /// the channel has no frame there. [n_ch * max_frames].
+    ///
+    /// Per-channel because channels no longer share a frame set: an LRGB-mono
+    /// batch gives L 24 frames and R 12, from different caches, and the
+    /// kernels must find each frame's FrameStats -- which are numbered
+    /// globally -- from a local slot index.
+    std::vector<int32_t>  global_frame_of;
 
     // ── Intermediate (persist on device across kernel passes) ─────────
     std::vector<float>    pixel_weights;    // [n_ch * max_frames * batch]
@@ -71,6 +79,12 @@ struct ShadowBuffers {
     void extract_from_cube(const Cube& cube,
                            const std::vector<ChannelCacheRef>& slot_refs,
                            int start_voxel, int count, int n_channels);
+
+    /// Fill global_frame_of from the slot refs. Call once per batch, before
+    /// extract_from_cube. Separate because it depends only on the caches,
+    /// not on which voxels this batch covers.
+    void map_frames(const std::vector<ChannelCacheRef>& slot_refs,
+                    int n_channels);
 
     /// Write classification + robust stats back to voxels.
     void writeback_classification(Cube& cube, int start_voxel, int count,
