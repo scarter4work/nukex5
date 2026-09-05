@@ -11,6 +11,7 @@
 __kernel void robust_stats(
     __global const float*   pixel_values,       // [C * N * B]
     __global const ushort*  n_frames_in,        // [C * B]
+    __global const uchar*   pixel_valid,        // [C * N * B] bits
     int n_channels,
     int max_frames,
     int batch_size,
@@ -36,13 +37,21 @@ __kernel void robust_stats(
         return;
     }
 
-    int n = min(nf, GPU_MAX_FRAMES);
-
-    // Load values into private memory
+    // Load only the COVERED values: an uncovered sample would drag the
+    // median and the MAD toward zero exactly at the frame edges.
     float vals[GPU_MAX_FRAMES];
     float sorted[GPU_MAX_FRAMES];
-    for (int fi = 0; fi < n; fi++)
-        vals[fi] = pixel_values[ch * N * B + fi * B + vi];
+    int navail = min(nf, GPU_MAX_FRAMES);
+    int n = 0;
+    for (int fi = 0; fi < navail; fi++)
+        if (sample_is_valid(pixel_valid, ch, fi, vi, N, B))
+            vals[n++] = pixel_values[ch * N * B + fi * B + vi];
+    if (n < 2) {
+        mad_out[ch * B + vi] = 0.0f;
+        biweight_midvar_out[ch * B + vi] = 0.0f;
+        iqr_out[ch * B + vi] = 0.0f;
+        return;
+    }
 
     // ── MAD ──
     for (int i = 0; i < n; i++) sorted[i] = vals[i];

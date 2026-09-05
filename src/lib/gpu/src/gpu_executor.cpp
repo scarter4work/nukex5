@@ -81,6 +81,15 @@ void GPUExecutor::execute_batch_gpu(
     cl_mem d_n_frames = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
         C * B * sizeof(uint16_t), buf.n_frames.data());
 
+    // Coverage bits. Empty means "no coverage information, every sample is
+    // real" -- which is what a unit test driving the kernels directly means --
+    // so materialise all-ones rather than branching inside the kernel.
+    std::vector<uint8_t> valid_host = buf.pixel_valid;
+    if (valid_host.empty())
+        valid_host.assign((static_cast<std::size_t>(C) * N * B + 7) / 8, 0xFFu);
+    cl_mem d_pixel_valid = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+        valid_host.size(), valid_host.data());
+
     // Frame-level constants
     // Staged per CHANNEL: buf.global_frame_of maps (channel, local slot) to
     // the batch-global frame whose FrameStats apply. Channels read different
@@ -139,6 +148,7 @@ void GPUExecutor::execute_batch_gpu(
         clSetKernelArg(k, arg++, sizeof(cl_mem), &d_welford_n);
         clSetKernelArg(k, arg++, sizeof(cl_mem), &d_pixel_values);
         clSetKernelArg(k, arg++, sizeof(cl_mem), &d_n_frames);
+        clSetKernelArg(k, arg++, sizeof(cl_mem), &d_pixel_valid);
         clSetKernelArg(k, arg++, sizeof(cl_mem), &d_frame_weight);
         clSetKernelArg(k, arg++, sizeof(cl_mem), &d_psf_weight);
         clSetKernelArg(k, arg++, sizeof(cl_mem), &d_cloud_score);
@@ -167,6 +177,7 @@ void GPUExecutor::execute_batch_gpu(
         int arg = 0;
         clSetKernelArg(k, arg++, sizeof(cl_mem), &d_pixel_values);
         clSetKernelArg(k, arg++, sizeof(cl_mem), &d_n_frames);
+        clSetKernelArg(k, arg++, sizeof(cl_mem), &d_pixel_valid);
         clSetKernelArg(k, arg++, sizeof(int), &C);
         clSetKernelArg(k, arg++, sizeof(int), &N);
         clSetKernelArg(k, arg++, sizeof(int), &B);
@@ -208,6 +219,7 @@ void GPUExecutor::execute_batch_gpu(
     clReleaseMemObject(d_welford_n);
     clReleaseMemObject(d_pixel_values);
     clReleaseMemObject(d_n_frames);
+    clReleaseMemObject(d_pixel_valid);
     clReleaseMemObject(d_frame_weight);
     clReleaseMemObject(d_psf_weight);
     clReleaseMemObject(d_cloud_score);
@@ -488,11 +500,21 @@ void GPUExecutor::execute_phase_b(
             std::vector<float> wts(n_channels * N);
             std::vector<int>   nf_ch(n_channels, 0);
             for (int ch = 0; ch < n_channels; ch++) {
-                nf_ch[ch] = static_cast<int>(buf.n_frames[ch * count + vi]);
-                for (int fi = 0; fi < N; fi++) {
-                    vals[ch * N + fi] = buf.pixel_values[ch * N * count + fi * count + vi];
-                    wts[ch * N + fi] = buf.pixel_weights[ch * N * count + fi * count + vi];
+                // Compact the COVERED samples to the front of the row. The
+                // fitter needs values and weights, not frame identity, so
+                // compaction is safe here -- unlike in the shadow buffers,
+                // where slot position is what ties a sample to its
+                // FrameStats. An uncovered sample is an absence; fitting it
+                // as a dark measurement is what put a rim on every stack.
+                const int navail = static_cast<int>(buf.n_frames[ch * count + vi]);
+                int k = 0;
+                for (int fi = 0; fi < navail && fi < N; fi++) {
+                    if (!buf.sample_valid(ch, fi, vi)) continue;
+                    vals[ch * N + k] = buf.pixel_values[ch * N * count + fi * count + vi];
+                    wts [ch * N + k] = buf.pixel_weights[ch * N * count + fi * count + vi];
+                    ++k;
                 }
+                nf_ch[ch] = k;
             }
 
             fitting_fn(voxel, vals.data(), wts.data(), N,

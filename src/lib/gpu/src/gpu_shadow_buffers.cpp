@@ -3,6 +3,7 @@
 #include "nukex/stacker/frame_cache.hpp"
 #include "nukex/stacker/cache_sig.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 
 namespace nukex {
@@ -26,6 +27,9 @@ void ShadowBuffers::allocate(int bs, int nc, int mf) {
 
     // Intermediate
     pixel_weights.resize(C * N * B, 0.0f);
+    // Left EMPTY on purpose, like global_frame_of: empty means "no coverage
+    // information, everything is a real sample", which is what a unit test
+    // driving the kernels directly means. extract_from_cube sizes it.
 
     // Classification output
     cloud_frame_count.resize(B, 0);
@@ -65,6 +69,7 @@ void ShadowBuffers::extract_from_cube(
     // the kernels cannot see pixel_values without also seeing the map that
     // says which global frame each local slot came from.
     map_frames(slot_refs, C);
+    pixel_valid.assign((static_cast<std::size_t>(C) * N * B + 7) / 8, 0);
 
     for (int vi = 0; vi < B; vi++) {
         int voxel_idx = start_voxel + vi;
@@ -89,21 +94,28 @@ void ShadowBuffers::extract_from_cube(
             float frame_vals[GPU_MAX_FRAMES];
             int nf_read = 0;
 
+            std::uint8_t frame_ok[GPU_MAX_FRAMES] = {0};
+
             if (ref.kind == SlotSynthesis::DIRECT) {
-                nf_read = ref.cache->read_pixel(px, py, ref.cache_ch, frame_vals);
+                nf_read = ref.cache->read_pixel(px, py, ref.cache_ch,
+                                                frame_vals, frame_ok);
 
             } else if (ref.kind == SlotSynthesis::REC709_LUMA) {
                 // Synthesise L per-frame from cached R, G, B channels.
                 // Matches Phase A's per-pixel: l = 0.299R + 0.587G + 0.114B.
                 float r_vals[GPU_MAX_FRAMES], g_vals[GPU_MAX_FRAMES], b_vals[GPU_MAX_FRAMES];
-                int n_r = ref.cache->read_pixel(px, py, 0, r_vals);
-                int n_g = ref.cache->read_pixel(px, py, 1, g_vals);
-                int n_b = ref.cache->read_pixel(px, py, 2, b_vals);
+                std::uint8_t r_ok[GPU_MAX_FRAMES], g_ok[GPU_MAX_FRAMES], b_ok[GPU_MAX_FRAMES];
+                int n_r = ref.cache->read_pixel(px, py, 0, r_vals, r_ok);
+                int n_g = ref.cache->read_pixel(px, py, 1, g_vals, g_ok);
+                int n_b = ref.cache->read_pixel(px, py, 2, b_vals, b_ok);
                 nf_read = std::min({n_r, n_g, n_b});
                 for (int fi = 0; fi < nf_read; ++fi) {
                     frame_vals[fi] = 0.299f * r_vals[fi]
                                    + 0.587f * g_vals[fi]
                                    + 0.114f * b_vals[fi];
+                    // Synthetic luminance mixes all three planes, so it is a
+                    // measurement only where all three are.
+                    frame_ok[fi] = (r_ok[fi] && g_ok[fi] && b_ok[fi]) ? 1 : 0;
                 }
             }
 
@@ -112,6 +124,7 @@ void ShadowBuffers::extract_from_cube(
             int n_copy = std::min(nf_read, N);
             for (int fi = 0; fi < n_copy; fi++) {
                 pixel_values[ch * N * B + fi * B + vi] = frame_vals[fi];
+                set_sample_valid(ch, fi, vi, frame_ok[fi] != 0);
             }
             n_frames[ch * B + vi] = static_cast<uint16_t>(n_copy);
         }

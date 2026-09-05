@@ -7,7 +7,7 @@
 #include "nukex/alignment/star_matcher.hpp"
 #include "nukex/alignment/homography.hpp"
 #include "nukex/alignment/channel_registration.hpp"
-#include "nukex/alignment/coverage_mask.hpp"
+#include "nukex/core/coverage_mask.hpp"
 #include "nukex/io/image.hpp"
 
 namespace nukex {

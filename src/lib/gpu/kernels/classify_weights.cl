@@ -13,6 +13,7 @@ __kernel void classify_weights(
     __global const uint*    welford_n,          // [C * B]
     __global const float*   pixel_values,       // [C * N * B]
     __global const ushort*  n_frames_in,        // [C * B]
+    __global const uchar*   pixel_valid,        // [C * N * B] bits
     // Frame-level constants (read-only, shared across all work-items)
     // Per CHANNEL now: two slots can read different caches with different
     // frame sets, so a frame's stats are found from (channel, local slot).
@@ -67,6 +68,12 @@ __kernel void classify_weights(
         float stddev = sqrt(variance);
 
         for (int fi = 0; fi < nf; fi++) {
+            // An uncovered sample is weighted to EXACTLY zero -- before
+            // weight_floor, which would otherwise give it a vote.
+            if (!sample_is_valid(pixel_valid, ch, fi, vi, N, B)) {
+                pixel_weights_out[ch * N * B + fi * B + vi] = 0.0f;
+                continue;
+            }
             float value = pixel_values[ch * N * B + fi * B + vi];
 
             float w = frame_weight[ch * N + fi] * psf_weight[ch * N + fi];

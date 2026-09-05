@@ -29,7 +29,11 @@ FrameCache::FrameCache(int width, int height, int n_channels,
 {
     // Compute total size
     size_t n_entries = static_cast<size_t>(width) * height * n_channels * max_frames;
-    mapped_size_ = n_entries * sizeof(uint16_t);
+    // Values, then a coverage bitplane of one bit per entry. The bitplane
+    // costs 1/16th of the value region, which is what it takes for Phase B to
+    // tell an absent sample from a measured zero.
+    coverage_bytes_ = (n_entries + 7) / 8;
+    mapped_size_ = n_entries * sizeof(uint16_t) + coverage_bytes_;
 
     // Create temp file
     filepath_ = cache_dir + "/nukex_cache_XXXXXX";
@@ -56,6 +60,7 @@ FrameCache::FrameCache(int width, int height, int n_channels,
         cleanup();
         throw std::runtime_error("FrameCache: mmap failed");
     }
+    coverage_bits_ = reinterpret_cast<std::uint8_t*>(mapped_) + n_entries * sizeof(uint16_t);
 }
 
 FrameCache::~FrameCache() {
@@ -82,10 +87,13 @@ FrameCache::FrameCache(FrameCache&& other) noexcept
       filepath_(std::move(other.filepath_)),
       width_(other.width_), height_(other.height_),
       n_channels_(other.n_channels_), max_frames_(other.max_frames_),
+      coverage_bits_(other.coverage_bits_),
+      coverage_bytes_(other.coverage_bytes_),
       n_frames_written_(other.n_frames_written_.load(std::memory_order_relaxed)),
       frame_map_(std::move(other.frame_map_))
 {
     other.fd_ = -1;
+    other.coverage_bits_ = nullptr;
     other.mapped_ = nullptr;
     other.mapped_size_ = 0;
 }
@@ -104,6 +112,9 @@ FrameCache& FrameCache::operator=(FrameCache&& other) noexcept {
         n_frames_written_.store(other.n_frames_written_.load(std::memory_order_relaxed),
                                 std::memory_order_relaxed);
         frame_map_ = std::move(other.frame_map_);
+        coverage_bits_ = other.coverage_bits_;
+        coverage_bytes_ = other.coverage_bytes_;
+        other.coverage_bits_ = nullptr;
         other.fd_ = -1;
         other.mapped_ = nullptr;
         other.mapped_size_ = 0;
@@ -111,7 +122,8 @@ FrameCache& FrameCache::operator=(FrameCache&& other) noexcept {
     return *this;
 }
 
-int FrameCache::write_frame(const Image& aligned, int global_index) {
+int FrameCache::write_frame(const Image& aligned, int global_index,
+                            const CoverageMask& coverage) {
     if (!mapped_) throw std::runtime_error("FrameCache: not mapped");
     const int frame_index = static_cast<int>(frame_map_.size());
     if (frame_index >= max_frames_)
@@ -124,6 +136,14 @@ int FrameCache::write_frame(const Image& aligned, int global_index) {
             for (int ch = 0; ch < n_channels_; ch++) {
                 float value = aligned.at(x, y, ch);
                 mapped_[offset(x, y, ch, frame_index)] = encode(value);
+                // An empty mask means the frame was cloned, not warped, so it
+                // covers itself completely.
+                const bool covered = coverage.empty()
+                                   || coverage.covered(ch, y, x);
+                const size_t b = cov_bit(x, y, ch, frame_index);
+                const std::uint8_t bit = static_cast<std::uint8_t>(1u << (b & 7));
+                if (covered) coverage_bits_[b >> 3] |= bit;
+                else         coverage_bits_[b >> 3] &= static_cast<std::uint8_t>(~bit);
             }
         }
     }
@@ -136,14 +156,27 @@ int FrameCache::write_frame(const Image& aligned, int global_index) {
 }
 
 int FrameCache::read_pixel(int x, int y, int ch, float* out_values) const {
+    return read_pixel(x, y, ch, out_values, nullptr);
+}
+
+int FrameCache::read_pixel(int x, int y, int ch, float* out_values,
+                           std::uint8_t* out_valid) const {
     if (!mapped_) return 0;
 
-    int n = n_frames_written_.load(std::memory_order_relaxed);
+    int n = n_frames_written_.load(std::memory_order_acquire);
     size_t base = offset(x, y, ch, 0);
 
     // Contiguous uint16 values for this pixel/channel across all frames
     for (int f = 0; f < n; f++) {
         out_values[f] = decode(mapped_[base + f]);
+    }
+    if (out_valid) {
+        const size_t bbase = cov_bit(x, y, ch, 0);
+        for (int f = 0; f < n; f++) {
+            const size_t b = bbase + f;
+            out_valid[f] = static_cast<std::uint8_t>(
+                (coverage_bits_[b >> 3] >> (b & 7)) & 1u);
+        }
     }
 
     return n;

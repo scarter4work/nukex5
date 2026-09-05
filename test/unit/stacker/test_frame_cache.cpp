@@ -133,3 +133,43 @@ TEST_CASE("FrameCache: a sparse global frame set reads back only what it receive
     REQUIRE(cache.global_frame(2) == 12);
     REQUIRE(cache.global_frame(3) == -1);
 }
+
+TEST_CASE("FrameCache: coverage survives the round trip", "[frame_cache]") {
+    // Phase B reads its per-frame samples back from the cache, so coverage has
+    // to live HERE and not only in the Phase A accumulators. Storing a warped
+    // zero without recording that it is absent is what left a rim at 94% of
+    // interior brightness on a finished stack even after the accumulators
+    // themselves were guarded.
+    FrameCache cache(2, 2, 1, /*max_frames*/ 4, "/tmp");
+
+    Image f(2, 2, 1);
+    f.fill(0.5f);
+
+    // Frame 0 covers everything.
+    cache.write_frame(f, 0);
+
+    // Frame 1 covers only pixel (0,0).
+    CoverageMask partial(2, 2, 1);
+    partial.set_covered(0, 0, 0, true);
+    cache.write_frame(f, 1, partial);
+
+    float vals[4] = {0};
+    std::uint8_t ok[4] = {9, 9, 9, 9};
+
+    int n = cache.read_pixel(0, 0, 0, vals, ok);
+    REQUIRE(n == 2);
+    REQUIRE(ok[0] == 1);   // frame 0: covered
+    REQUIRE(ok[1] == 1);   // frame 1: covered here
+
+    n = cache.read_pixel(1, 1, 0, vals, ok);
+    REQUIRE(n == 2);
+    REQUIRE(ok[0] == 1);   // frame 0 covered everything
+    REQUIRE(ok[1] == 0);   // frame 1 did NOT cover this pixel
+    // The stored value is still 0.5 -- indistinguishable from real data
+    // without the mask, which is the entire point.
+    REQUIRE(vals[1] == Catch::Approx(0.5f).margin(1e-4));
+
+    // An omitted mask means "cloned, not warped": covers itself completely.
+    REQUIRE(cache.read_pixel(1, 0, 0, vals, ok) == 2);
+    REQUIRE(ok[0] == 1);
+}

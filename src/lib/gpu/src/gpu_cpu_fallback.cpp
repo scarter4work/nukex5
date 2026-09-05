@@ -70,6 +70,15 @@ void GPUCPUFallback::classify_weights(
                 const int gf = buf.global_frame_of.empty()
                              ? fi : buf.global_frame_of[ch * N + fi];
                 if (gf < 0) continue;   // this channel has no frame here
+
+                // An uncovered sample is an absence, not a dark measurement.
+                // Weight it to EXACTLY zero -- before weight_floor, which
+                // would otherwise give it a vote -- so every later stage
+                // ignores it without needing to know why.
+                if (!buf.sample_valid(ch, fi, vi)) {
+                    buf.pixel_weights[ch * N * B + fi * B + vi] = 0.0f;
+                    continue;
+                }
                 const FrameStats& fst = frame_stats[gf];
                 float w = fst.frame_weight * fst.psf_weight;
 
@@ -139,13 +148,24 @@ void GPUCPUFallback::robust_stats(
                 buf.iqr_out[ch * B + vi] = 0.0f;
                 continue;
             }
-            // Collect values for this voxel-channel
+            // Collect the COVERED values for this voxel-channel. An
+            // uncovered sample would otherwise drag the median and the MAD
+            // toward zero exactly at the frame edges.
             float vals[GPU_MAX_FRAMES];
             float sorted[GPU_MAX_FRAMES];
-            int n = std::min(nf, static_cast<int>(GPU_MAX_FRAMES));
-
-            for (int fi = 0; fi < n; fi++)
-                vals[fi] = buf.pixel_values[ch * N * B + fi * B + vi];
+            int n = 0;
+            {
+                const int navail = std::min(nf, static_cast<int>(GPU_MAX_FRAMES));
+                for (int fi = 0; fi < navail; fi++)
+                    if (buf.sample_valid(ch, fi, vi))
+                        vals[n++] = buf.pixel_values[ch * N * B + fi * B + vi];
+            }
+            if (n < 2) {
+                buf.mad_out[ch * B + vi] = 0.0f;
+                buf.biweight_midvar_out[ch * B + vi] = 0.0f;
+                buf.iqr_out[ch * B + vi] = 0.0f;
+                continue;
+            }
 
             // ── MAD ──
             // Sort to find median

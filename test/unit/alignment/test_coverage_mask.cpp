@@ -1,5 +1,5 @@
 #include "catch_amalgamated.hpp"
-#include "nukex/alignment/coverage_mask.hpp"
+#include "nukex/core/coverage_mask.hpp"
 #include "nukex/core/welford.hpp"
 
 using namespace nukex;

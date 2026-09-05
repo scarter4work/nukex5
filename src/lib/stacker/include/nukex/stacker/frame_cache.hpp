@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nukex/io/image.hpp"
+#include "nukex/core/coverage_mask.hpp"
 #include <string>
 #include <cstdint>
 #include <atomic>
@@ -45,7 +46,17 @@ public:
     /// that received a subset of the batch: a cache given frames 5, 9 and 12
     /// of twenty reported thirteen frames and handed Phase B ten unwritten
     /// slots as though they were measurements.
-    int write_frame(const Image& aligned, int global_index);
+    /// `coverage` says which pixels of `aligned` actually carry source data.
+    /// An empty mask means the frame was cloned rather than warped and covers
+    /// itself completely.
+    ///
+    /// Coverage has to live in the cache, not only in the Phase A
+    /// accumulators: `stacked` is produced by Phase B, which reads its
+    /// per-frame samples back from here. Storing the warped zeros without
+    /// saying they are absent is what left a rim at 94% of interior
+    /// brightness even after the accumulators were guarded.
+    int write_frame(const Image& aligned, int global_index,
+                    const CoverageMask& coverage = CoverageMask{});
 
     /// The batch-global frame number stored at `local`. -1 if out of range.
     int global_frame(int local) const {
@@ -57,6 +68,12 @@ public:
     /// out_values must have space for at least n_frames_ floats.
     /// Returns number of frames written so far.
     int read_pixel(int x, int y, int ch, float* out_values) const;
+
+    /// As read_pixel, and additionally reports which of those frames actually
+    /// covered this pixel. `out_valid[f]` is 1 when frame slot f has real
+    /// data here, 0 when the warp left it outside the source.
+    int read_pixel(int x, int y, int ch, float* out_values,
+                   std::uint8_t* out_valid) const;
 
     /// Number of frames written so far.
     int n_frames_written() const { return n_frames_written_.load(std::memory_order_relaxed); }
@@ -76,6 +93,11 @@ private:
     int fd_ = -1;
     uint16_t* mapped_ = nullptr;
     size_t mapped_size_ = 0;
+    /// Coverage bitplane, one bit per (pixel, channel, frame), laid out with
+    /// the same index as offset(). Lives after the value region in the same
+    /// mapping.
+    std::uint8_t* coverage_bits_ = nullptr;
+    size_t coverage_bytes_ = 0;
     std::string filepath_;
 
     int width_ = 0;
@@ -91,6 +113,10 @@ private:
             ((static_cast<int64_t>(y) * width_ + x) * n_channels_ + ch)
             * max_frames_ + f);
     }
+
+    /// Bit index of (x, y, ch, f) in the coverage plane -- same ordering as
+    /// offset(), so the two stay in step by construction.
+    size_t cov_bit(int x, int y, int ch, int f) const { return offset(x, y, ch, f); }
 
     void cleanup();
 };

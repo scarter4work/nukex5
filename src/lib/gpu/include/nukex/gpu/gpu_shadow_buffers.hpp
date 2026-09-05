@@ -43,6 +43,32 @@ struct ShadowBuffers {
     /// globally -- from a local slot index.
     std::vector<int32_t>  global_frame_of;
 
+    /// One bit per (channel, frame slot, voxel), same index as pixel_values:
+    /// 1 when that frame actually covered that pixel, 0 when the warp left it
+    /// outside the source.
+    ///
+    /// Bits rather than compaction, deliberately. Compacting the valid
+    /// samples per voxel would make slot `fi` a DIFFERENT frame in different
+    /// voxels, and frame_stats is indexed by slot -- every weight, gain and
+    /// read-noise would then be attributed to the wrong exposure exactly at
+    /// the coverage boundary, which is the region this exists to fix.
+    /// The plane costs C*N/8 bytes per voxel, about 1% of the record.
+    std::vector<uint8_t>  pixel_valid;
+
+    bool sample_valid(int ch, int fi, int vi) const {
+        if (pixel_valid.empty()) return true;   // no mask: everything covered
+        const std::size_t b = (static_cast<std::size_t>(ch) * max_frames + fi)
+                            * batch_size + vi;
+        return (pixel_valid[b >> 3] >> (b & 7)) & 1u;
+    }
+    void set_sample_valid(int ch, int fi, int vi, bool v) {
+        const std::size_t b = (static_cast<std::size_t>(ch) * max_frames + fi)
+                            * batch_size + vi;
+        const uint8_t bit = static_cast<uint8_t>(1u << (b & 7));
+        if (v) pixel_valid[b >> 3] |= bit;
+        else   pixel_valid[b >> 3] &= static_cast<uint8_t>(~bit);
+    }
+
     // ── Intermediate (persist on device across kernel passes) ─────────
     std::vector<float>    pixel_weights;    // [n_ch * max_frames * batch]
 

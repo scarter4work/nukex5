@@ -734,7 +734,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         get_or_create_cache(aligned.image.width(),
                             aligned.image.height(),
                             aligned.image.n_channels(),
-                            routing_key).write_frame(aligned.image, f);
+                            routing_key).write_frame(aligned.image, f, aligned.coverage);
 
         // 6. Frame-level stats
         float frame_median = compute_frame_median(aligned.image);

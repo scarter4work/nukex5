@@ -2,7 +2,7 @@
 
 #include "nukex/alignment/channel_registration.hpp"
 #include "nukex/alignment/types.hpp"
-#include "nukex/alignment/coverage_mask.hpp"
+#include "nukex/core/coverage_mask.hpp"
 #include "nukex/io/image.hpp"
 
 namespace nukex {

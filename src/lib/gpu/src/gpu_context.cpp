@@ -243,6 +243,7 @@ int GPUContext::estimate_batch_size(int n_frames, int n_channels) const {
       + sizeof(float) * n_channels * n_frames             // pixel_weights
       + sizeof(float) * 6 + sizeof(uint16_t) * 2          // classification
       + sizeof(float) * n_channels * 9                    // robust + dist + output
+      + (static_cast<size_t>(n_channels) * n_frames + 7) / 8  // coverage bits
       + 32;                                               // padding
 
     size_t available;
