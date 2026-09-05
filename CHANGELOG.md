@@ -1,5 +1,56 @@
 # NukeX — Changelog
 
+## v5.0.1.1 — 2026-09-04
+
+### Added
+- **NukeX now registers a frame's colour channels to each other.** Until now
+  it aligned frames to one another but never aligned the colour planes
+  *within* a frame, so lateral chromatic aberration and atmospheric dispersion
+  smeared every star across colour no matter how good the frame-to-frame
+  alignment was. Each channel is now centroided at the stars the aligner
+  already found, fitted against green for uniform scale plus translation, and
+  that correction is folded into the warp that was going to run anyway — one
+  resample per channel, exactly as before, so it costs nothing extra.
+
+  Measured on 53 Optolong L-Quad Enhance frames of M3, median star separation
+  between the red and green planes of the finished stack:
+
+  | | before | after |
+  |---|---|---|
+  | red vs green | 0.354 px | **0.042 px** |
+  | blue vs green | 0.081 px | 0.046 px |
+
+  Blue is the control rather than a second result: through a quad-band filter
+  green and blue both image near 500 nm, so blue-green separation is mostly
+  centroid noise and there is very little colour error in it to remove. Red
+  images H-alpha at 656 nm and is where the error lives. On that rig red was
+  scaled about +330 ppm relative to green — 1.2 px of displacement at the
+  frame corner — and the correction is now measured and removed per frame.
+
+  It is always on and needs no setting. A frame whose correction would move
+  nothing measurable is left alone rather than resampled, so a well-corrected
+  rig pays nothing for the feature. Mono frames are untouched.
+
+### Changed
+- **Stars are detected on green instead of channel 0.** On a debayered colour
+  frame channel 0 is red — through a quad-band filter often both the weakest
+  channel and the one carrying the most lateral colour error. Green has two of
+  every four photosites and is the better reference for both star detection
+  and channel registration. Because the frame-to-frame homography is fitted
+  from those centroids, this sharpens the whole stack and not just the colour
+  registration: median green star FWHM on the M3 set went from 4.24 px to
+  3.77 px, and 33 of 33 and 12 of 12 frames still align on the regression
+  corpora.
+
+### Fixed
+- **The last row and column of every aligned frame are no longer discarded.**
+  The warp's bounds check rejected a source coordinate that landed exactly on
+  the final row or column instead of interpolating it, so those output pixels
+  were left at zero — and the stacker has no way to tell an absent sample from
+  a measured black one, so the zeros were averaged in as though they were
+  data. This is a small correction on its own (47 pixels of a 3840x2160 mono
+  stack) and it is deliberately visible in the regression baselines.
+
 ## v5.0.1.0 — 2026-09-04
 
 ### Added
