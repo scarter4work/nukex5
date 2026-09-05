@@ -4,6 +4,7 @@
 #include <string>
 #include <cstdint>
 #include <atomic>
+#include <vector>
 
 namespace nukex {
 
@@ -32,9 +33,25 @@ public:
     FrameCache(FrameCache&& other) noexcept;
     FrameCache& operator=(FrameCache&& other) noexcept;
 
-    /// Phase A: Write one aligned frame to the cache.
-    /// Encodes float->uint16 and scatters to pixel-major positions.
-    void write_frame(int frame_index, const Image& aligned);
+    /// Phase A: Append one aligned frame at the next LOCAL slot.
+    ///
+    /// Returns the local slot it was written to. `global_index` is the
+    /// frame's number within the whole batch, recorded so Phase B can
+    /// recover its FrameStats -- those are indexed globally, while every
+    /// pixel read here is indexed locally.
+    ///
+    /// Local slots are dense by construction. They used to be the global
+    /// index, which made read_pixel's contiguous read wrong for any cache
+    /// that received a subset of the batch: a cache given frames 5, 9 and 12
+    /// of twenty reported thirteen frames and handed Phase B ten unwritten
+    /// slots as though they were measurements.
+    int write_frame(const Image& aligned, int global_index);
+
+    /// The batch-global frame number stored at `local`. -1 if out of range.
+    int global_frame(int local) const {
+        return (local >= 0 && local < static_cast<int>(frame_map_.size()))
+             ? frame_map_[local] : -1;
+    }
 
     /// Phase B: Read all frame values at one pixel/channel, decoded to float.
     /// out_values must have space for at least n_frames_ floats.
@@ -66,6 +83,7 @@ private:
     int n_channels_ = 0;
     int max_frames_ = 0;
     std::atomic<int> n_frames_written_{0};
+    std::vector<int> frame_map_;   ///< local slot -> batch-global frame index
 
     /// Element offset for pixel (x, y), channel ch, frame f.
     size_t offset(int x, int y, int ch, int f) const {

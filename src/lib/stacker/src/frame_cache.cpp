@@ -82,7 +82,8 @@ FrameCache::FrameCache(FrameCache&& other) noexcept
       filepath_(std::move(other.filepath_)),
       width_(other.width_), height_(other.height_),
       n_channels_(other.n_channels_), max_frames_(other.max_frames_),
-      n_frames_written_(other.n_frames_written_.load(std::memory_order_relaxed))
+      n_frames_written_(other.n_frames_written_.load(std::memory_order_relaxed)),
+      frame_map_(std::move(other.frame_map_))
 {
     other.fd_ = -1;
     other.mapped_ = nullptr;
@@ -102,6 +103,7 @@ FrameCache& FrameCache::operator=(FrameCache&& other) noexcept {
         max_frames_ = other.max_frames_;
         n_frames_written_.store(other.n_frames_written_.load(std::memory_order_relaxed),
                                 std::memory_order_relaxed);
+        frame_map_ = std::move(other.frame_map_);
         other.fd_ = -1;
         other.mapped_ = nullptr;
         other.mapped_size_ = 0;
@@ -109,10 +111,11 @@ FrameCache& FrameCache::operator=(FrameCache&& other) noexcept {
     return *this;
 }
 
-void FrameCache::write_frame(int frame_index, const Image& aligned) {
+int FrameCache::write_frame(const Image& aligned, int global_index) {
     if (!mapped_) throw std::runtime_error("FrameCache: not mapped");
-    if (frame_index < 0 || frame_index >= max_frames_)
-        throw std::out_of_range("FrameCache: frame_index out of range");
+    const int frame_index = static_cast<int>(frame_map_.size());
+    if (frame_index >= max_frames_)
+        throw std::out_of_range("FrameCache: more frames than the cache was sized for");
     if (aligned.width() != width_ || aligned.height() != height_ || aligned.n_channels() != n_channels_)
         throw std::invalid_argument("FrameCache::write_frame: image dimensions do not match cache");
 
@@ -125,10 +128,11 @@ void FrameCache::write_frame(int frame_index, const Image& aligned) {
         }
     }
 
-    int current = n_frames_written_.load(std::memory_order_relaxed);
-    if (frame_index >= current) {
-        n_frames_written_.store(frame_index + 1, std::memory_order_relaxed);
-    }
+    frame_map_.push_back(global_index);
+    // Published after the pixels are in place: Phase B reads
+    // n_frames_written_ to decide how many slots are real.
+    n_frames_written_.store(frame_index + 1, std::memory_order_release);
+    return frame_index;
 }
 
 int FrameCache::read_pixel(int x, int y, int ch, float* out_values) const {

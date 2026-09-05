@@ -733,7 +733,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         obs.advance(0, "  caching");
         get_or_create_cache(aligned.image.width(),
                             aligned.image.height(),
-                            aligned.image.n_channels()).write_frame(f, aligned.image);
+                            aligned.image.n_channels()).write_frame(aligned.image, f);
 
         // 6. Frame-level stats
         float frame_median = compute_frame_median(aligned.image);
