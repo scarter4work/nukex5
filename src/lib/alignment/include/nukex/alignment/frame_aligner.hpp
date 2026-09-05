@@ -2,6 +2,8 @@
 
 #include "nukex/alignment/types.hpp"
 #include "nukex/alignment/star_detector.hpp"
+
+#include <vector>
 #include "nukex/alignment/star_matcher.hpp"
 #include "nukex/alignment/homography.hpp"
 #include "nukex/alignment/channel_registration.hpp"
@@ -35,6 +37,26 @@ public:
         /// the near-identity skip -- a rig with no colour error pays nothing.
         /// The flag exists so tests can isolate the old behaviour.
         bool register_channels = true;
+
+        /// Rescue a frame that cannot match the reference directly by
+        /// matching it against an already-aligned neighbour and composing
+        /// the two transforms.
+        ///
+        /// A single reference cannot bridge a long session: on the M27 2025
+        /// corpus (7 hours, ~110 px of cumulative drift) the frames at both
+        /// temporal ends get plenty of correspondences -- 55 at 36 frames out
+        /// -- and the homography rejects every one, because drift changes
+        /// which stars are in the top-K and the descriptors match the wrong
+        /// ones. Neighbouring frames have barely drifted at all, so the chain
+        /// walks outward to the ends of the session.
+        ///
+        /// A FALLBACK, never the default path: a frame that matches the
+        /// reference directly is untouched, which is what keeps every corpus
+        /// that already aligns fully bit-identical.
+        bool chain_through_anchors = true;
+
+        /// How many anchors to try before giving up, nearest in time first.
+        int max_anchor_attempts = 4;
     };
 
     FrameAligner() = default;
@@ -75,6 +97,9 @@ public:
     /// against its own catalog.
     void set_reference(const Image& frame, int frame_index);
 
+    /// How many frames were rescued by chaining. Diagnostic.
+    int chained_count() const { return chained_count_; }
+
     /// Get the reference catalog (for inspection/debugging).
     const StarCatalog& reference_catalog() const { return ref_catalog_; }
 
@@ -90,12 +115,32 @@ private:
     void adopt_reference(const Image& frame, const StarCatalog& stars,
                          int frame_index);
 
+    /// A frame already aligned to the reference, usable as a stepping stone.
+    ///
+    /// Holds its catalog and its transform TO the reference, so a later frame
+    /// that matches this one composes straight through:
+    ///   H_ref<-frame = H_ref<-anchor * H_anchor<-frame
+    /// A frame rescued through an anchor becomes an anchor itself, which is
+    /// what lets the chain reach the ends of a session.
+    struct Anchor {
+        int              index = -1;
+        StarCatalog      catalog;
+        HomographyMatrix H_ref_from_anchor;
+    };
+
+    /// Try to reach the reference through an anchor. Returns true and fills
+    /// `result` on success.
+    bool try_chain(const StarCatalog& stars, int frame_index,
+                   AlignmentResult& result) const;
+
     Config config_;
     StarCatalog ref_catalog_;
     bool has_ref_ = false;
     int ref_width_ = 0;
     int ref_height_ = 0;
     int ref_index_ = -1;
+    std::vector<Anchor> anchors_;
+    int chained_count_ = 0;
 };
 
 } // namespace nukex

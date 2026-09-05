@@ -662,7 +662,16 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                 + "% pixels at saturation)");
         } else {
            const auto& a = aligned.alignment;
-           std::string status = a.alignment_failed ? "FAILED" : "ok";
+           // A chained frame is aligned, but it reached the reference through
+           // a neighbour rather than directly -- worth saying, because a run
+           // full of them means the session drifted far enough that the
+           // single-reference matcher could not bridge it.
+           std::string status = a.alignment_failed
+                              ? "FAILED"
+                              : (a.chained
+                                 ? ("ok (chained via frame "
+                                    + std::to_string(a.chained_via + 1) + ")")
+                                 : "ok");
            std::string rms_str;
            {
               char buf[32];

@@ -359,3 +359,101 @@ TEST_CASE("a frame whose alignment fails still gets its channels registered",
     REQUIRE(out.alignment.alignment_failed);
     CHECK(std::abs(channel_offset_x(out.image, 0, 1, 30, 90, 30, 90)) < 0.06);
 }
+
+// ---------------------------------------------------------------------------
+// Anchor chaining for session drift
+//
+// M27 2025 aligns 51 of 72 frames. The 21 failures are the two temporal ends
+// of a seven-hour session with ~110 px of cumulative tracking drift. The far
+// frames are not short of correspondences -- at 36 frames out they get 55
+// matches and the homography rejects every one -- because drift changes WHICH
+// stars are in the top-K, so triangle descriptors match the wrong stars.
+//
+// The synthetic version of that is a window panning across a larger sky:
+// neighbouring frames share almost all their stars, distant ones share few.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// A fixed, irregular sky. Irregular on purpose: triangle-similarity matching
+// is degenerate on a regular grid.
+std::vector<std::pair<float,float>> drift_sky() {
+    std::vector<std::pair<float,float>> sky;
+    std::uint32_t st = 12345u;
+    for (int i = 0; i < 220; i++) {
+        st ^= st << 13; st ^= st >> 17; st ^= st << 5;
+        const float x = static_cast<float>((st >> 8) % 5200) / 10.0f;   // 0..520
+        st ^= st << 13; st ^= st >> 17; st ^= st << 5;
+        const float y = static_cast<float>((st >> 8) % 1900) / 10.0f;   // 0..190
+        sky.emplace_back(x, y);
+    }
+    return sky;
+}
+
+// One 200x200 exposure of that sky, its window offset by (ox, 0).
+Image drift_frame(const std::vector<std::pair<float,float>>& sky, float ox) {
+    std::vector<std::tuple<float,float,float>> stars;
+    for (size_t i = 0; i < sky.size(); i++) {
+        const float x = sky[i].first - ox, y = sky[i].second;
+        if (x < 6 || x > 194 || y < 6 || y > 194) continue;
+        stars.emplace_back(x, y, 0.5f + 0.004f * (i % 100));
+    }
+    return create_star_field(200, 200, stars);
+}
+
+} // namespace
+
+TEST_CASE("FrameAligner: a drifted frame that cannot match the reference "
+          "directly is rescued by chaining through an anchor",
+          "[aligner][chaining]") {
+    const auto sky = drift_sky();
+
+    // Reference at offset 0; the session pans 22 px per frame.
+    FrameAligner chained;                       // chaining on (default)
+
+    FrameAligner::Config no_chain_cfg;
+    no_chain_cfg.chain_through_anchors = false;
+    FrameAligner direct(no_chain_cfg);
+
+    const int n = 9;
+    int ok_direct = 0, ok_chained = 0;
+    for (int i = 0; i < n; i++) {
+        Image f = drift_frame(sky, 22.0f * i);
+        if (!direct.align(f, i).alignment.alignment_failed)  ok_direct++;
+        if (!chained.align(f, i).alignment.alignment_failed) ok_chained++;
+    }
+
+    INFO("direct=" << ok_direct << " chained=" << ok_chained << " of " << n);
+    // Chaining must rescue frames the direct path loses, and must never lose
+    // one the direct path found.
+    REQUIRE(ok_chained >= ok_direct);
+    REQUIRE(ok_chained > ok_direct);
+    // The direct path must genuinely lose frames here, or the case is not
+    // exercising what it claims to.
+    REQUIRE(ok_direct < n);
+    // And chaining should recover the whole pan, which is the point: each
+    // step is a small drift even though the ends share almost no stars.
+    REQUIRE(ok_chained == n);
+}
+
+TEST_CASE("FrameAligner: chaining does not disturb a session that already "
+          "aligns fully", "[aligner][chaining]") {
+    // The reason chaining is a FALLBACK and not the default path: the three
+    // regression corpora align every frame today, so they must never enter
+    // it and their goldens cannot move.
+    std::vector<std::tuple<float,float,float>> stars = {
+        {50, 50, 0.8f}, {150, 47, 0.7f}, {103, 100, 0.9f},
+        {47, 152, 0.6f}, {150, 150, 0.75f}, {83, 78, 0.65f},
+        {122, 118, 0.55f}, {31, 97, 0.5f}, {168, 104, 0.45f}
+    };
+    Image ref = create_star_field(200, 200, stars);
+
+    FrameAligner aligner;
+    auto r0 = aligner.align(ref, 0);
+    REQUIRE_FALSE(r0.alignment.alignment_failed);
+    REQUIRE_FALSE(r0.alignment.chained);
+
+    auto r1 = aligner.align(ref, 1);   // identical frame: matches directly
+    REQUIRE_FALSE(r1.alignment.alignment_failed);
+    REQUIRE_FALSE(r1.alignment.chained);
+}

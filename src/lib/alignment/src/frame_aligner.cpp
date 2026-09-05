@@ -1,10 +1,55 @@
 #include "nukex/alignment/frame_aligner.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 #include <cmath>
 
 namespace nukex {
 
 FrameAligner::FrameAligner(const Config& config) : config_(config) {}
+
+bool FrameAligner::try_chain(const StarCatalog& stars, int frame_index,
+                             AlignmentResult& result) const {
+    if (anchors_.empty()) return false;
+
+    // Nearest in time first: the least drift between the two frames, so the
+    // best chance their top-K star sets still overlap.
+    std::vector<const Anchor*> by_distance;
+    by_distance.reserve(anchors_.size());
+    for (const auto& a : anchors_) by_distance.push_back(&a);
+    std::sort(by_distance.begin(), by_distance.end(),
+              [frame_index](const Anchor* a, const Anchor* b) {
+                  return std::abs(a->index - frame_index)
+                       < std::abs(b->index - frame_index);
+              });
+
+    const int limit = std::min<int>(config_.max_anchor_attempts,
+                                    static_cast<int>(by_distance.size()));
+    for (int i = 0; i < limit; ++i) {
+        const Anchor* a = by_distance[i];
+        auto matches = StarMatcher::match(stars, a->catalog, config_.match_config);
+        AlignmentResult step = HomographyComputer::compute(
+            stars, a->catalog, matches, config_.homography_config);
+        if (step.alignment_failed) continue;
+        if (step.is_meridian_flipped) {
+            step.H = HomographyComputer::correct_meridian_flip(
+                step.H, ref_width_, ref_height_);
+        }
+
+        // H_ref<-frame = H_ref<-anchor * H_anchor<-frame. Composing the
+        // TRANSFORMS, so the frame is still resampled exactly once; chained
+        // resampling would blur every rescued frame.
+        result.H = a->H_ref_from_anchor.compose(step.H);
+        result.match = step.match;
+        result.alignment_failed = false;
+        result.weight_penalty = 1.0f;
+        result.chained = true;
+        result.chained_via = a->index;
+        return true;
+    }
+    return false;
+}
 
 FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_index) {
     AlignedFrame result;
@@ -87,6 +132,24 @@ FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_ind
     if (result.alignment.is_meridian_flipped && !result.alignment.alignment_failed) {
         result.alignment.H = HomographyComputer::correct_meridian_flip(
             result.alignment.H, ref_width_, ref_height_);
+    }
+
+    // A single reference cannot bridge a long session. If the direct match
+    // failed, try to reach the reference through an already-aligned
+    // neighbour: neighbouring frames have barely drifted, so they match, and
+    // composing their transforms walks the chain outward to the ends of the
+    // session. Fallback only -- a frame that matched directly never gets
+    // here, which is what keeps fully-aligning corpora bit-identical.
+    if (result.alignment.alignment_failed && config_.chain_through_anchors) {
+        if (try_chain(result.stars, frame_index, result.alignment)) {
+            ++chained_count_;
+        }
+    }
+
+    // Every frame that reached the reference -- directly or through the chain
+    // -- can serve as a stepping stone for the next one.
+    if (!result.alignment.alignment_failed) {
+        anchors_.push_back(Anchor{frame_index, result.stars, result.alignment.H});
     }
 
     if (!result.alignment.alignment_failed) {
