@@ -1,5 +1,74 @@
 # NukeX — Changelog
 
+## v5.0.2.0 — 2026-09-05
+
+### Added
+- **NukeX stacks LRGB mono batches.** A batch carrying more than one mono
+  filter used to be refused, and before that it produced one populated
+  channel and three black ones. Every mono frame has the same shape
+  whatever filter took it, so all of them shared a single frame cache and no
+  colour channel could read its own exposures back. Each filter now gets its
+  own cache and every channel carries its own set of frames, so L, R, G and
+  B stack together in one run — including the ordinary case where you shot
+  twice as much luminance as colour.
+
+- **Frames from the ends of a long session are no longer thrown away.**
+  NukeX aligns every frame to one reference. Over a long night the mount
+  drifts, and by the far end of the session the stars near the edges are not
+  the same stars the reference saw, so matching fails even though the frame
+  is perfectly good. A frame that cannot match the reference now matches a
+  neighbour it *can* match, and the two transforms are combined. On a
+  seven-hour M27 session that is the difference between using the middle of
+  the night and using all of it. Frames are still resampled exactly once,
+  and the Process Console says when a frame was aligned this way.
+
+### Fixed
+- **Narrowband colour no longer depends on brightness.** The colour of an
+  emission-line pixel is meant to come from the ratio of the lines present,
+  not from how bright the pixel is. NukeX was scaling colour by raw signal,
+  so on a 12-frame M16 stack the entire green channel came out at zero: OIII
+  rendered blue instead of teal, the background went magenta, and 24.5 of
+  24.5 million pixels reported as clipped. This is the failure Lupton et al.
+  (2004, PASP 116, 133) describe when they write that under a non-linear
+  mapping "an object's color in the composite image depends upon its
+  brightness". Hue is now the line ratio, brightness is carried by
+  luminance alone, and out-of-gamut pixels are pulled back in a way that
+  keeps their colour — the same approach used for the published Hubble
+  images (Rector, Levay, Frattare et al. 2004, AJ).
+
+  Faint pixels are still kept near-neutral so noise is not painted in bold
+  colour, but that is now a deliberate threshold measured from the stack's
+  own background rather than a side effect.
+
+- **The edges of a stack are no longer dragged dark.** Where a frame was
+  shifted to line up with the others, the pixels that fall outside it were
+  left at zero, and the stacker could not tell those zeros from a genuine
+  measurement of black — so it averaged them in. On a 53-frame session that
+  put a visible black rim on the border and, less obviously, left a band up
+  to 48 pixels deep noticeably too dark. NukeX now records which pixels each
+  frame actually covers and only averages real measurements.
+
+- **The auto-stretch now suits the image in front of it.** The stretch
+  intensity was a single fixed number, and the backgrounds it had to cope
+  with differ by nearly a factor of ten between targets — so the same
+  setting left one stack sitting at 8% brightness and another at 43%.
+  Turning it up globally would not have fixed it: a stronger stretch
+  brightens but flattens, and on the brightest test set it cost more than
+  half the separation between the background and the highlights. NukeX now
+  solves the intensity against each image's own background, aiming at the
+  same level PixInsight's own screen autostretch uses, so different targets
+  come out looking comparable. The Process Console reports the value it
+  picked.
+
+- **Large stacks no longer drive the machine into swap.** The working batch
+  size was chosen from the graphics card's memory, but the matching buffers
+  are held in system memory, so a card with plenty of VRAM could ask for
+  more system memory than the machine had. On a 24 MP colour stack that
+  meant tens of gigabytes of swapping. The batch is now limited by both.
+  Output is unchanged — verified bit-for-bit across four different batch
+  sizes.
+
+
 ## v5.0.1.1 — 2026-09-04
 
 ### Added
