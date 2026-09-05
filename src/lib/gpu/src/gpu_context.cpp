@@ -1,5 +1,9 @@
 #include "nukex/gpu/gpu_context.hpp"
 
+#include <fstream>
+#include <limits>
+#include <string>
+
 #if NUKEX_HAS_OPENCL
 #include <CL/cl.h>
 #endif
@@ -204,6 +208,25 @@ GPUContext& GPUContext::operator=(GPUContext&& other) noexcept {
 
 #endif // NUKEX_HAS_OPENCL
 
+std::size_t GPUContext::host_available_bytes() {
+#if defined(__linux__)
+    // MemAvailable is the kernel's own estimate of what a new allocation can
+    // get without swapping -- the right question here. MemFree is not: it
+    // excludes reclaimable page cache and would understate wildly.
+    std::ifstream mi("/proc/meminfo");
+    std::string key;
+    while (mi >> key) {
+        if (key == "MemAvailable:") {
+            unsigned long long kb = 0;
+            if (mi >> kb) return static_cast<std::size_t>(kb) * 1024ULL;
+            break;
+        }
+        mi.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    }
+#endif
+    return 0;   // unknown: callers fall back to the VRAM-only figure
+}
+
 int GPUContext::estimate_batch_size(int n_frames, int n_channels) const {
     // Memory per voxel in the shadow buffers:
     // welford: 3 floats * n_channels
@@ -229,6 +252,19 @@ int GPUContext::estimate_batch_size(int n_frames, int n_channels) const {
         // CPU fallback: use 2 GB as a reasonable working set
         available = 2ULL * 1024 * 1024 * 1024;
     }
+
+    // Cap by host RAM as well. ShadowBuffers::allocate sizes its vectors to
+    // this same batch on the HOST, so a batch that fits in VRAM can still be
+    // one the machine cannot hold beside the cube it is reading from.
+    std::size_t host_budget = host_budget_;
+    if (host_budget == 0) {
+        const std::size_t avail = host_available_bytes();
+        // Half of what is available. The cube is already resident and
+        // counted out of MemAvailable; the remaining half is headroom for
+        // the fitting loop's per-thread scratch and for the OS.
+        if (avail > 0) host_budget = avail / 2;
+    }
+    if (host_budget > 0 && host_budget < available) available = host_budget;
 
     int batch = static_cast<int>(available / per_voxel);
     return std::max(batch, 1);

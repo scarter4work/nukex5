@@ -258,3 +258,106 @@ TEST_CASE("CPU Fallback: spatial_context Sobel on uniform image is zero", "[gpu]
         for (int x = 1; x < W - 1; x++)
             REQUIRE(grad[y * W + x] == Catch::Approx(0.0f).margin(1e-6f));
 }
+
+// ══════════════════════════════════════════════════════════
+// Batch-size invariance
+//
+// Phase B slices the cube into batches sized from GPU VRAM, and the shadow
+// buffers are host-side vectors of that size. Before capping the batch by
+// host RAM it has to be established that batch size is a staging choice and
+// not a numerical one -- if it moved pixel output, every E2E golden would
+// silently depend on how much VRAM the machine happened to have.
+//
+// Batch size is part of the SoA stride (ch * N * B + fi * B + vi), so this is
+// not self-evidently true from reading the indexing.
+// ══════════════════════════════════════════════════════════
+
+namespace {
+
+void fill_dist_inputs(ShadowBuffers& buf, int B, int C) {
+    for (int ch = 0; ch < C; ch++)
+        for (int vi = 0; vi < B; vi++) {
+            buf.dist_true_signal[ch * B + vi] = 0.4f + 0.001f * ((vi * 7 + ch) % 97);
+            buf.dist_uncertainty[ch * B + vi] = 0.01f + 0.0001f * ((vi * 13 + ch) % 51);
+            buf.dist_confidence[ch * B + vi]  = 0.5f + 0.004f * ((vi * 3 + ch) % 101);
+        }
+}
+
+// Copy one voxel's inputs out of `src` (batch Bs, voxel si) into `dst`
+// (batch Bd, voxel di), re-striding as it goes.
+void copy_voxel_inputs(const ShadowBuffers& src, int Bs, int si,
+                       ShadowBuffers& dst, int Bd, int di, int C, int N) {
+    dst.n_frames[di] = src.n_frames[si];
+    for (int ch = 0; ch < C; ch++) {
+        dst.welford_mean[ch * Bd + di] = src.welford_mean[ch * Bs + si];
+        dst.welford_M2  [ch * Bd + di] = src.welford_M2  [ch * Bs + si];
+        dst.welford_n   [ch * Bd + di] = src.welford_n   [ch * Bs + si];
+        dst.dist_true_signal[ch * Bd + di] = src.dist_true_signal[ch * Bs + si];
+        dst.dist_uncertainty[ch * Bd + di] = src.dist_uncertainty[ch * Bs + si];
+        dst.dist_confidence [ch * Bd + di] = src.dist_confidence [ch * Bs + si];
+        for (int fi = 0; fi < N; fi++)
+            dst.pixel_values[ch * N * Bd + fi * Bd + di] =
+                src.pixel_values[ch * N * Bs + fi * Bs + si];
+    }
+}
+
+} // namespace
+
+TEST_CASE("CPU Fallback: kernel output does not depend on batch size",
+          "[gpu][fallback]") {
+    const int B = 96, C = 3, N = 12;
+    auto fs = make_frame_stats(N);
+    WeightConfig wc;
+
+    std::mt19937 rng(20260905u);
+    ShadowBuffers full;
+    full.allocate(B, C, N);
+    fill_synthetic(full, B, C, N, rng);
+    fill_dist_inputs(full, B, C);
+
+    GPUCPUFallback::classify_weights(full, fs.data(), wc, B, C, N);
+    GPUCPUFallback::robust_stats(full, B, C, N);
+    GPUCPUFallback::select_pixels(full, fs.data(), B, C, N);
+
+    for (int split : {48, 32, 7}) {
+        INFO("batch split = " << split);
+        // Re-run the identical voxels in chunks of `split` and compare.
+        for (int base = 0; base < B; base += split) {
+            const int count = std::min(split, B - base);
+
+            ShadowBuffers part;
+            part.allocate(count, C, N);
+            for (int vi = 0; vi < count; vi++)
+                copy_voxel_inputs(full, B, base + vi, part, count, vi, C, N);
+
+            GPUCPUFallback::classify_weights(part, fs.data(), wc, count, C, N);
+            GPUCPUFallback::robust_stats(part, count, C, N);
+            GPUCPUFallback::select_pixels(part, fs.data(), count, C, N);
+
+            for (int vi = 0; vi < count; vi++) {
+                const int si = base + vi;
+                INFO("voxel " << si);
+                REQUIRE(part.cloud_frame_count[vi] == full.cloud_frame_count[si]);
+                REQUIRE(part.trail_frame_count[vi] == full.trail_frame_count[si]);
+                REQUIRE(part.worst_sigma_score[vi] == full.worst_sigma_score[si]);
+                REQUIRE(part.best_sigma_score[vi]  == full.best_sigma_score[si]);
+                REQUIRE(part.mean_weight_out[vi]   == full.mean_weight_out[si]);
+                REQUIRE(part.total_exposure_out[vi]== full.total_exposure_out[si]);
+                for (int ch = 0; ch < C; ch++) {
+                    REQUIRE(part.mad_out[ch * count + vi]
+                            == full.mad_out[ch * B + si]);
+                    REQUIRE(part.biweight_midvar_out[ch * count + vi]
+                            == full.biweight_midvar_out[ch * B + si]);
+                    REQUIRE(part.iqr_out[ch * count + vi]
+                            == full.iqr_out[ch * B + si]);
+                    REQUIRE(part.output_value[ch * count + vi]
+                            == full.output_value[ch * B + si]);
+                    REQUIRE(part.noise_sigma[ch * count + vi]
+                            == full.noise_sigma[ch * B + si]);
+                    REQUIRE(part.snr_out[ch * count + vi]
+                            == full.snr_out[ch * B + si]);
+                }
+            }
+        }
+    }
+}

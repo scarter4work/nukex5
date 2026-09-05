@@ -46,3 +46,47 @@ TEST_CASE("GPU: batch size estimation is reasonable", "[gpu]") {
     // CPU fallback with 2 GB should still be substantial
     REQUIRE(batch > 1000);
 }
+
+TEST_CASE("GPUContext: host memory is readable on this platform", "[gpu][context]") {
+    // The cap is only real if the budget can actually be measured. If this
+    // ever returns 0 the batch silently reverts to the VRAM-only figure,
+    // which is the behaviour that sent a 30 GB box into swap.
+    const std::size_t avail = GPUContext::host_available_bytes();
+#if defined(__linux__)
+    REQUIRE(avail > 0);
+#else
+    SUCCEED("host_available_bytes not implemented for this platform");
+#endif
+}
+
+TEST_CASE("GPUContext: the batch is capped by host memory, not just VRAM",
+          "[gpu][context]") {
+    GPUContext ctx = GPUContext::create({});
+
+    // A deliberately small host budget must produce a smaller batch than a
+    // large one, whatever the device reports for VRAM.
+    ctx.set_host_memory_budget(64ull * 1024 * 1024);      // 64 MB
+    const int small = ctx.estimate_batch_size(30, 3);
+
+    ctx.set_host_memory_budget(16ull * 1024 * 1024 * 1024); // 16 GB
+    const int large = ctx.estimate_batch_size(30, 3);
+
+    INFO("small=" << small << " large=" << large);
+    REQUIRE(small >= 1);
+    REQUIRE(small < large);
+
+    // And the cap must actually bind: 64 MB of shadow buffers for 30 frames
+    // and 3 channels cannot hold anywhere near a million voxels.
+    REQUIRE(small < 1000000);
+}
+
+TEST_CASE("GPUContext: a zero budget restores the measured default",
+          "[gpu][context]") {
+    GPUContext ctx = GPUContext::create({});
+    ctx.set_host_memory_budget(64ull * 1024 * 1024);
+    const int capped = ctx.estimate_batch_size(30, 3);
+    ctx.set_host_memory_budget(0);
+    const int measured = ctx.estimate_batch_size(30, 3);
+    REQUIRE(ctx.host_memory_budget() == 0);
+    REQUIRE(measured > capped);
+}
