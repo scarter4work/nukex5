@@ -30,6 +30,22 @@ public:
 
     void  apply(Image& img) const override;
 
+    /// Choose log_D so this image's own background lands near
+    /// `target_background`, and return it.
+    ///
+    /// A fixed intensity cannot serve different data. Measured on the three
+    /// regression corpora, the linear background spans 0.0166 (M16 HaO3) to
+    /// 0.1479 (NGC7635 mono) -- nearly an order of magnitude -- so one log_D
+    /// puts one of them at 0.08 and another at 0.43. Worse, raising log_D
+    /// brightens but FLATTENS: on NGC7635 the spread between the median and
+    /// the 99.9th percentile falls from 0.191 to 0.073 as log_D goes 2 -> 5.
+    /// So the intensity is solved per image instead of chosen once.
+    ///
+    /// 0.25 is the target PixInsight's own ScreenTransferFunction autostretch
+    /// uses, which is the convention users of this ecosystem already read
+    /// their images against.
+    float auto_tune(const Image& img, float target_background = 0.25f);
+
     /// Scalar version: stretches a single luminance value.
     float apply_scalar(float x) const override;
 

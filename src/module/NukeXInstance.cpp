@@ -21,6 +21,7 @@
 // NukeX pipeline headers
 #include "nukex/stacker/stacking_engine.hpp"
 #include "nukex/compose/color_composer.hpp"
+#include "nukex/stretch/veralux_stretch.hpp"
 #include "nukex/stretch/stretch_pipeline.hpp"
 #include "nukex/stretch/image_stats.hpp"
 #include "nukex/stretch/layer_loader.hpp"
@@ -846,6 +847,25 @@ bool NukeXInstance::ExecuteGlobal()
 
       if ( !auto_log.empty() )
          progress.message( auto_log.c_str() );
+
+      // Solve the stretch intensity against THIS image rather than shipping
+      // one number for every target. Measured across the regression corpora
+      // the linear background spans 0.0166 to 0.1479 -- nearly an order of
+      // magnitude -- so a single log_D put one stack's median at 0.08 and
+      // another's at 0.43. Raising it globally is not the answer either: it
+      // brightens but flattens, and on the mono corpus the spread between the
+      // median and the 99.9th percentile FALLS from 0.191 to 0.073 as log_D
+      // goes 2 to 5.
+      if ( primary_op != nullptr && primary_op->name == "VeraLux" )
+      {
+         if ( auto* vl = dynamic_cast<nukex::VeraLuxStretch*>( primary_op.get() ) )
+         {
+            const float solved = vl->auto_tune( result.stacked );
+            progress.message( pcl::String().Format(
+               "Stretch intensity solved for this image: log_D = %.2f "
+               "(background target 0.25).", solved ).ToUTF8().c_str() );
+         }
+      }
 
       // Capture last-run state BEFORE the unique_ptr is moved into the
       // pipeline, so we can read op.name / op.get_param() cheaply. The

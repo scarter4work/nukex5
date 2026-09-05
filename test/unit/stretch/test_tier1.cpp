@@ -321,3 +321,37 @@ TEST_CASE("Tier1: visual outputs on M16", "[tier1][visual]") {
 
     REQUIRE(true);
 }
+
+TEST_CASE("VeraLux: auto_tune puts the background on the target, whatever the "
+          "data's level", "[stretch][veralux]") {
+    // One fixed intensity cannot serve different targets. The three
+    // regression corpora have linear backgrounds spanning 0.0166 to 0.1479 --
+    // nearly an order of magnitude -- so a single log_D put one stack's
+    // median at 0.084 and another's at 0.431.
+    for (float bg : {0.0166f, 0.0264f, 0.1479f}) {
+        Image img(64, 64, 1);
+        img.fill(bg);
+        // A little structure above the background so the median is the
+        // background rather than the only value present.
+        for (int i = 0; i < 64; ++i) img.at(i, 0, 0) = bg * 4.0f;
+
+        VeraLuxStretch v;
+        const float solved = v.auto_tune(img, 0.25f);
+        INFO("bg=" << bg << " solved log_D=" << solved);
+        REQUIRE(solved >= 0.0f);
+        REQUIRE(solved <= 7.0f);
+        // The background must land on the target.
+        REQUIRE(v.apply_scalar(bg) == Catch::Approx(0.25f).margin(0.01f));
+    }
+}
+
+TEST_CASE("VeraLux: auto_tune leaves a degenerate image alone", "[stretch][veralux]") {
+    // An all-black frame has no background to solve against; the default must
+    // survive rather than the bisection running away.
+    Image img(8, 8, 1);
+    img.fill(0.0f);
+    VeraLuxStretch v;
+    const float before = v.log_D;
+    REQUIRE(v.auto_tune(img, 0.25f) == Catch::Approx(before));
+    REQUIRE(v.log_D == Catch::Approx(before));
+}
