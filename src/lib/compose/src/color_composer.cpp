@@ -69,6 +69,12 @@ double ColorComposer::signal_weight(double v) {
     return std::max(0.0, v); // simple linear weight; clamp negatives
 }
 
+bool ColorComposer::out_of_gamut(const sRGBPixel& p) {
+    const double eps = 1e-9;
+    return p.r < -eps || p.g < -eps || p.b < -eps
+        || p.r > 1.0 + eps || p.g > 1.0 + eps || p.b > 1.0 + eps;
+}
+
 bool ColorComposer::clip_to_gamut(double& r, double& g, double& b) {
     bool clipped = false;
 
@@ -92,9 +98,26 @@ bool ColorComposer::clip_to_gamut(double& r, double& g, double& b) {
 }
 
 sRGBPixel ColorComposer::compose_pixel(const DerivedSlots& s) {
-    // 1) L_broadband: native L, or rec709 from RGB if no L
-    double L_broad = (s.L > 0.0) ? s.L
-                                 : (0.299 * s.R + 0.587 * s.G + 0.114 * s.B);
+    // 1) Luminance: native L, else rec709 from RGB, else the emission total.
+    //
+    // The third case is not a fallback, it is the narrowband case. A dual-NB
+    // frame has no broadband slots at all -- Phase B fills Ha and OIII, and L,
+    // R, G and B are all zero -- so without it every composed pixel has L* = 0
+    // and the image is black. It did not LOOK black before only because the
+    // chrominance was being clamped into the visible range channel by channel,
+    // which is to say the picture was made entirely of a rounding artefact.
+    //
+    // Total line flux is the right quantity: it is what Rector, Levay,
+    // Frattare et al. 2004 (AJ) add together when they stack colorized
+    // narrowband layers, and it leaves hue -- the RATIO of those lines -- to
+    // be carried separately, exactly as Lupton et al. 2004 require.
+    const double emission_total = std::max(0.0, s.Ha)
+                                + std::max(0.0, s.OIII)
+                                + std::max(0.0, s.SII);
+    const double rec709 = 0.299 * s.R + 0.587 * s.G + 0.114 * s.B;
+    double L_broad = (s.L > 0.0)   ? s.L
+                   : (rec709 > 0.0) ? rec709
+                                    : std::min(1.0, emission_total);
 
     // 2) Continuum subtract (opt-in)
     double ha = s.Ha, oiii = s.OIII, sii = s.SII;
@@ -166,10 +189,43 @@ sRGBPixel ColorComposer::compose_pixel(const DerivedSlots& s) {
         lab_natural.b + emission_b
     };
 
-    // 5) Convert to sRGB and soft-clip
+    // 5) Convert to sRGB, reducing chroma until the colour fits.
+    //
+    // Clamping channels is what destroys hue, and it does so in BOTH
+    // directions. Lupton et al. 2004 give the fix for a channel above 1
+    // (rescale all three by their maximum), but the emission palette is
+    // saturated enough -- a* of +50 to +60 -- that at the low luminance of
+    // real narrowband data the conversion lands NEGATIVE in green, and
+    // flooring that to zero flattens the hue just as badly. On the M16 HaO3
+    // corpus that left green identically zero across all 24.5 million
+    // pixels even after the chrominance itself was correct.
+    //
+    // So gamut mapping happens in Lab, not sRGB: hold L and the hue angle,
+    // and walk chroma toward the neutral axis until every channel is in
+    // range. Scaling a and b together preserves the hue angle exactly, which
+    // is the property the whole line-ratio argument depends on.
     sRGBPixel out = lab_to_srgb(lab_final);
-    if (clip_to_gamut(out.r, out.g, out.b)) {
+    if (out_of_gamut(out)) {
         ++gamut_clipped_;
+
+        double lo = 0.0, hi = 1.0;   // lo is always in gamut: chroma 0 is grey
+        for (int i = 0; i < 16; ++i) {
+            const double mid = 0.5 * (lo + hi);
+            // Scale the FULL chrominance, natural plus emission, so the hue
+            // angle of the composite is what is held.
+            const LabColor scaled{ lab_final.L, lab_final.a * mid, lab_final.b * mid };
+            if (out_of_gamut(lab_to_srgb(scaled))) hi = mid; else lo = mid;
+        }
+        const LabColor fitted{ lab_final.L, lab_final.a * lo, lab_final.b * lo };
+        out = lab_to_srgb(fitted);
+        last_gamut_chroma_scale_ = lo;
+
+        // L itself can exceed the cube even at zero chroma (a pixel brighter
+        // than white). Fall back to the Lupton rescale for that, which keeps
+        // the colour and clips only the intensity.
+        clip_to_gamut(out.r, out.g, out.b);
+    } else {
+        last_gamut_chroma_scale_ = 1.0;
     }
     return out;
 }

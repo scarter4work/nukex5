@@ -78,6 +78,10 @@ public:
     double last_pixel_emission_b() const { return last_emission_b_; }
     double last_pixel_chroma_scale() const { return last_chroma_scale_; }
 
+    /// How far chroma had to be pulled toward the neutral axis to fit the
+    /// sRGB gamut on the last pixel. 1.0 means it fitted as computed.
+    double last_pixel_gamut_chroma_scale() const { return last_gamut_chroma_scale_; }
+
 private:
     Mode         mode_      = Mode::LAB_LCH_DEFAULT;
     ContinuumK   continuum_ = {};
@@ -87,11 +91,13 @@ private:
     double       gate_background_ = 0.0;
     double       gate_full_scale_ = 0.0;
     double       last_chroma_scale_ = 0.0;
+    double       last_gamut_chroma_scale_ = 1.0;
 
     static LabColor    rgb_to_lab(double r, double g, double b);
     static sRGBPixel   lab_to_srgb(const LabColor& lab);
     static double      signal_weight(double v);
     bool               clip_to_gamut(double& r, double& g, double& b);
+    static bool        out_of_gamut(const sRGBPixel& p);
 };
 
 } // namespace nukex

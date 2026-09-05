@@ -221,3 +221,70 @@ TEST_CASE("ColorComposer: sky at the measured background is desaturated",
     c.compose_pixel(bright);
     REQUIRE(c.last_pixel_chroma_scale() == Catch::Approx(1.0));
 }
+
+TEST_CASE("ColorComposer: a faint OIII pixel keeps green rather than clipping "
+          "it away", "[color_composer]") {
+    // The M16 failure, reduced. The emission palette is saturated (a* of
+    // -15 to +60) and real narrowband data is dark, so the Lab->sRGB
+    // conversion lands negative in green. Flooring that to zero flattens the
+    // hue exactly as badly as clamping the top does, and it left green
+    // identically zero across all 24.5 million pixels of the M16 composite.
+    ColorComposer c;
+    auto s = zeroed();
+    s.OIII = 0.04;      // OIII-dominant
+    s.Ha   = 0.005;
+    s.L    = 0.09;      // realistic faint luminance
+    sRGBPixel out = c.compose_pixel(s);
+
+    INFO("r=" << out.r << " g=" << out.g << " b=" << out.b
+         << " gamut_chroma=" << c.last_pixel_gamut_chroma_scale());
+    REQUIRE(out.r >= 0.0);
+    REQUIRE(out.g >= 0.0);
+    REQUIRE(out.b >= 0.0);
+    REQUIRE(out.r <= 1.0);
+    REQUIRE(out.g <= 1.0);
+    REQUIRE(out.b <= 1.0);
+    // Teal: green present, and blue at least as strong as red.
+    REQUIRE(out.g > 0.005);
+    REQUIRE(out.b >= out.r);
+}
+
+TEST_CASE("ColorComposer: gamut mapping holds the hue angle", "[color_composer]") {
+    // Reducing chroma scales a and b together, so atan2(b, a) is unchanged.
+    // That is the property the whole line-ratio argument rests on: if gamut
+    // mapping could rotate hue, normalising the chrominance would buy nothing.
+    ColorComposer c;
+    auto s = zeroed();
+    s.Ha = 0.30; s.OIII = 0.10; s.L = 0.05;
+    c.compose_pixel(s);
+    const double a = c.last_pixel_emission_a();
+    const double b = c.last_pixel_emission_b();
+    REQUIRE(std::abs(a) + std::abs(b) > 0.0);
+    // The scale applied is uniform, so the ratio b/a survives it exactly.
+    const double k = c.last_pixel_gamut_chroma_scale();
+    REQUIRE(k > 0.0);
+    REQUIRE(k <= 1.0);
+    REQUIRE((b * k) / (a * k) == Catch::Approx(b / a));
+}
+
+TEST_CASE("ColorComposer: a narrowband-only pixel has luminance of its own",
+          "[color_composer]") {
+    // A dual-NB frame fills Ha and OIII and leaves L, R, G and B at zero, so
+    // without luminance from the line flux every composed pixel is black.
+    // The M16 composite only ever looked like an image because out-of-gamut
+    // chrominance was being clamped into visible range channel by channel.
+    ColorComposer c;
+    auto s = zeroed();
+    s.Ha = 0.20; s.OIII = 0.05;      // no broadband whatsoever
+    sRGBPixel out = c.compose_pixel(s);
+    INFO("r=" << out.r << " g=" << out.g << " b=" << out.b);
+    REQUIRE((out.r + out.g + out.b) > 0.05);
+
+    // Brighter lines, same ratio -> brighter pixel, same hue.
+    ColorComposer c2;
+    auto s2 = zeroed();
+    s2.Ha = 0.60; s2.OIII = 0.15;
+    sRGBPixel out2 = c2.compose_pixel(s2);
+    REQUIRE((out2.r + out2.g + out2.b) > (out.r + out.g + out.b));
+    REQUIRE(c2.last_pixel_emission_a() == Catch::Approx(c.last_pixel_emission_a()).margin(1e-9));
+}
