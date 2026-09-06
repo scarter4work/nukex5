@@ -16,6 +16,7 @@ namespace nukex {
 ///   Source: gitlab.com/free-astro/siril-scripts/-/tree/main/VeraLux
 class VeraLuxStretch : public StretchOp {
 public:
+    float SP       = 0.0f;   // Shadow point: input level mapped to black [0, 1)
     float log_D    = 2.0f;   // Stretch intensity: D = 10^log_D (range 0-7)
     float protect_b = 6.0f;  // Hyperbolic knee protection (0.1-15)
     float convergence_power = 3.5f;  // Star core white transition speed (1-10)
@@ -30,8 +31,8 @@ public:
 
     void  apply(Image& img) const override;
 
-    /// Choose log_D so this image's own background lands near
-    /// `target_background`, and return it.
+    /// Solve BOTH curve parameters against this image: the shadow point `SP`
+    /// and the intensity `log_D`. Returns log_D; read `SP` for the other.
     ///
     /// A fixed intensity cannot serve different data. Measured on the three
     /// regression corpora, the linear background spans 0.0166 (M16 HaO3) to
@@ -41,9 +42,18 @@ public:
     /// the 99.9th percentile falls from 0.191 to 0.073 as log_D goes 2 -> 5.
     /// So the intensity is solved per image instead of chosen once.
     ///
+    /// Positioning and contrast are separate problems, and the intensity only
+    /// solves the first: it MOVES the histogram, while only a shadow point
+    /// WIDENS it. Measured on a 74-frame stack whose 99.9th percentile sits 44
+    /// sigma above the background, SP = 0 delivered that as 4% of the output
+    /// range, because a ~1% wide signal band rides on a pedestal that eats 98%
+    /// of the curve. Solving both took the luminance spread from 0.040 to
+    /// 0.299 -- 7.5x -- with the background still exactly on target.
+    ///
     /// 0.25 is the target PixInsight's own ScreenTransferFunction autostretch
     /// uses, which is the convention users of this ecosystem already read
-    /// their images against.
+    /// their images against, and SP = median - 2.8 sigma is that same
+    /// autostretch's shadow-clipping convention.
     float auto_tune(const Image& img, float target_background = 0.25f);
 
     /// Scalar version: stretches a single luminance value.

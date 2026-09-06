@@ -856,14 +856,21 @@ bool NukeXInstance::ExecuteGlobal()
       // brightens but flattens, and on the mono corpus the spread between the
       // median and the 99.9th percentile FALLS from 0.191 to 0.073 as log_D
       // goes 2 to 5.
+      //
+      // The shadow point is the other half, and it is the one that buys
+      // contrast: intensity MOVES the histogram, only a shadow point WIDENS
+      // it. On a 74-frame stack whose p99.9 sits 44 sigma above the
+      // background, solving both took the luminance spread from 0.040 to
+      // 0.299 with the background landing on 0.2501.
       if ( primary_op != nullptr && primary_op->name == "VeraLux" )
       {
          if ( auto* vl = dynamic_cast<nukex::VeraLuxStretch*>( primary_op.get() ) )
          {
             const float solved = vl->auto_tune( result.stacked );
             progress.message( pcl::String().Format(
-               "Stretch intensity solved for this image: log_D = %.2f "
-               "(background target 0.25).", solved ).ToUTF8().c_str() );
+               "Stretch solved for this image: shadow point = %.4f, "
+               "log_D = %.2f (background target 0.25).",
+               vl->SP, solved ).ToUTF8().c_str() );
          }
       }
 

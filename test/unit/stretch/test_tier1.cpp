@@ -6,7 +6,10 @@
 #include "nukex/stretch/arcsinh_stretch.hpp"
 #include "png_writer.hpp"
 #include "test_data_loader.hpp"
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <vector>
 #include <filesystem>
 
 using namespace nukex;
@@ -354,4 +357,143 @@ TEST_CASE("VeraLux: auto_tune leaves a degenerate image alone", "[stretch][veral
     const float before = v.log_D;
     REQUIRE(v.auto_tune(img, 0.25f) == Catch::Approx(before));
     REQUIRE(v.log_D == Catch::Approx(before));
+}
+
+// Deterministic, well-spread noise. A plain (x,y) hash clumps along cell
+// borders, which once flattened a MAD to ~1e-4 and made a robust-statistics
+// gate untestable at any threshold; splitmix64 over the flat index does not.
+static float test_gauss(std::uint64_t i) {
+    auto mix = [](std::uint64_t z) {
+        z += 0x9E3779B97F4A7C15ull;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        return z ^ (z >> 31);
+    };
+    const double u1 = (mix(2 * i) >> 11) * 0x1.0p-53 + 1e-12;
+    const double u2 = (mix(2 * i + 1) >> 11) * 0x1.0p-53;
+    return static_cast<float>(std::sqrt(-2.0 * std::log(u1)) *
+                              std::cos(6.283185307179586 * u2));
+}
+
+// A linear deep-sky frame in miniature: a bright pedestal, tight read noise,
+// faint nebulosity a few tens of sigma up, and a sparse star field. Modelled
+// on the user's own 74-frame stack, where the background sat at 0.0418 and
+// the 99.9th percentile only 44 sigma above it.
+static Image narrow_band_on_a_pedestal(float bg, float sigma) {
+    Image img(256, 256, 1);
+    float* d = img.channel_data(0);
+    const int n = 256 * 256;
+    for (int i = 0; i < n; ++i) {
+        float v = bg + sigma * test_gauss(static_cast<std::uint64_t>(i));
+        if (i % 10 == 0)  v += sigma * 25.0f * (static_cast<float>(i % 997) / 997.0f);
+        if (i % 1000 == 0) v += sigma * 45.0f;
+        d[i] = v;
+    }
+    return img;
+}
+
+static float percentile_of(const Image& img, double q) {
+    std::vector<float> v(img.channel_data(0),
+                         img.channel_data(0) + img.width() * img.height());
+    auto k = v.begin() + static_cast<std::size_t>(q * (v.size() - 1));
+    std::nth_element(v.begin(), k, v.end());
+    return *k;
+}
+
+TEST_CASE("VeraLux: auto_tune solves a shadow point, so a narrow signal band "
+          "on a pedestal comes out with contrast", "[stretch][veralux]") {
+    // Measured on the user's stack: the linear data is good -- p99.9 sits 44
+    // sigma above the background -- but the stretch delivered it as 4% of the
+    // output range (p50 0.2569 -> p99.9 0.2969), because the whole signal band
+    // is ~1% wide sitting on a pedestal that eats 98% of the curve.
+    const float bg = 0.0418f, sigma = 0.0002f;
+    Image img = narrow_band_on_a_pedestal(bg, sigma);
+
+    VeraLuxStretch v;
+    v.auto_tune(img, 0.25f);
+    v.apply(img);
+
+    const float p50 = percentile_of(img, 0.50);
+    const float p999 = percentile_of(img, 0.999);
+    INFO("p50=" << p50 << " p99.9=" << p999 << " SP=" << v.SP
+                << " log_D=" << v.log_D);
+
+    // Positioning is unchanged: the background still lands on the target.
+    REQUIRE(p50 == Catch::Approx(0.25f).margin(0.02f));
+    // Contrast is the point. Simulated on the real stack, solving SP as well
+    // as the intensity took the spread from 0.0393 to 0.2853.
+    REQUIRE(p999 - p50 > 0.15f);
+}
+
+TEST_CASE("VeraLux: the shadow point sits just below the background, not on it",
+          "[stretch][veralux]") {
+    // STF's convention: median - 2.8 sigma. Clipping AT the median would throw
+    // away half the frame; leaving it at zero is what cost the contrast.
+    const float bg = 0.0418f, sigma = 0.0002f;
+    Image img = narrow_band_on_a_pedestal(bg, sigma);
+
+    VeraLuxStretch v;
+    v.auto_tune(img, 0.25f);
+    INFO("SP=" << v.SP << " bg=" << bg);
+    REQUIRE(v.SP > 0.0f);
+    REQUIRE(v.SP < bg);
+    REQUIRE(v.SP == Catch::Approx(bg - 2.8f * sigma).margin(4.0f * sigma));
+}
+
+TEST_CASE("VeraLux: a background already at the floor gets no shadow point",
+          "[stretch][veralux]") {
+    // Data whose median is below 2.8 sigma has nothing to clip; SP must floor
+    // at zero rather than going negative and lifting the black point.
+    Image img(64, 64, 1);
+    float* d = img.channel_data(0);
+    for (int i = 0; i < 64 * 64; ++i)
+        d[i] = std::max(0.0f, 0.0001f + 0.001f * test_gauss(static_cast<std::uint64_t>(i)));
+
+    VeraLuxStretch v;
+    v.auto_tune(img, 0.25f);
+    REQUIRE(v.SP >= 0.0f);
+    REQUIRE(v.apply_scalar(0.0f) == Catch::Approx(0.0f));
+}
+
+TEST_CASE("VeraLux: auto_tune tunes the luminance it actually stretches, not "
+          "one channel of it", "[stretch][veralux]") {
+    // apply() stretches L = wR*R + wG*G + wB*B; auto_tune must solve against
+    // that same quantity. Measured on the user's own stack the background is
+    // strongly imbalanced -- red 0.0270, green 0.0418 -- so a shadow point
+    // derived from green sits ABOVE the luminance of 99.6% of the frame and
+    // clips it to black. With SP = 0 the same mismatch was merely a bias: it
+    // is why the shipped stretch landed its background at 0.2569 rather than
+    // on the 0.2500 it was solving for.
+    const float sigma = 0.0002f;
+    const float bg[3] = {0.0270f, 0.0418f, 0.0388f};
+    Image img(256, 256, 3);
+    for (int ch = 0; ch < 3; ++ch) {
+        float* d = img.channel_data(ch);
+        for (int i = 0; i < 256 * 256; ++i) {
+            float v = bg[ch] + sigma * test_gauss(static_cast<std::uint64_t>(ch * 100003 + i));
+            if (i % 10 == 0)   v += sigma * 25.0f * (static_cast<float>(i % 997) / 997.0f);
+            if (i % 1000 == 0) v += sigma * 45.0f;
+            d[i] = v;
+        }
+    }
+
+    VeraLuxStretch v;
+    v.auto_tune(img, 0.25f);
+    v.apply(img);
+
+    std::vector<float> lum(256 * 256);
+    for (int i = 0; i < 256 * 256; ++i)
+        lum[i] = v.w_R * img.channel_data(0)[i] + v.w_G * img.channel_data(1)[i]
+               + v.w_B * img.channel_data(2)[i];
+    const std::size_t half = lum.size() / 2;
+    std::nth_element(lum.begin(), lum.begin() + half, lum.end());
+    const float p50 = lum[half];
+    const std::size_t black = std::count(lum.begin(), lum.end(), 0.0f);
+
+    INFO("SP=" << v.SP << " log_D=" << v.log_D << " lum p50=" << p50
+               << " black=" << black);
+    REQUIRE(p50 == Catch::Approx(0.25f).margin(0.02f));
+    // A shadow point at median - 2.8 sigma clips the bottom ~0.3% of a normal
+    // background, not most of the frame.
+    REQUIRE(black < lum.size() / 20);
 }
