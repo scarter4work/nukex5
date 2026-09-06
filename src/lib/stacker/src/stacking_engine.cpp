@@ -23,6 +23,7 @@
 #include "nukex/calibration/qe_database.hpp"
 // TASK-14-COLLAPSE: same — for ChannelDecomposer pImpl.
 #include "nukex/calibration/channel_decomposer.hpp"
+#include "nukex/calibration/background_neutralization.hpp"
 #include <Eigen/Dense>
 #include "nukex/classify/weight_computer.hpp"
 // ColorComposer is module-owned (Task 11 / Task 12). The engine produces
@@ -1304,7 +1305,48 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             }
         }
 
+        // The composed window has to agree with the other two, so the
+        // derived chroma slots get the same treatment as the stacked image.
+        // Emission lines are excluded: Ha and OIII are different physical
+        // lines, not a colour balance.
+        {
+            std::vector<float*> chroma;
+            for (const char* nm : {"R", "G", "B"}) {
+                auto it = derived.slots.find(nm);
+                if (it != derived.slots.end() && it->second.size() == static_cast<std::size_t>(N))
+                    chroma.push_back(it->second.data());
+            }
+            match_plane_backgrounds(chroma, static_cast<std::size_t>(N));
+        }
+
         result.derived = std::move(derived);
+    }
+
+    // Match the chroma slots' sky levels before anything downstream sees them.
+    //
+    // A broadband stack's green cast is an ADDITIVE sky pedestal -- filter and
+    // light pollution, weighted by QE -- not a scaling error. Measured on a
+    // 74-frame OSC stack the background sits at G/R = 1.54 while the signal,
+    // once each channel's own background is removed, sits at 1.07. Every
+    // stretch preserves colour ratios, so that 1.54 rides all the way to the
+    // finished image: the user's M63 JPEG measured G/R = 1.52 after GHS,
+    // curves and a crop. A pedestal comes off by subtraction, in linear
+    // space, or not at all -- and it has to come off HERE, because the linear
+    // stack is what leaves NukeX for the rest of a user's workflow.
+    {
+        const BackgroundOffsets bg = neutralize_chroma_slots(stacked, cube.channel_config);
+        if (bg.applied) {
+            std::string msg = "Background matched to the dimmest colour channel; subtracted";
+            const std::vector<int> idx = chroma_slot_indices(cube.channel_config);
+            for (std::size_t k = 0; k < idx.size() && k < bg.subtracted.size(); ++k) {
+                char buf[64];
+                std::snprintf(buf, sizeof(buf), " %s %.5f",
+                              cube.channel_config.slot_name(idx[k]).c_str(),
+                              static_cast<double>(bg.subtracted[k]));
+                msg += buf;
+            }
+            obs.message(msg + ".");
+        }
     }
 
     result.stacked = std::move(stacked);

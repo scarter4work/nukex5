@@ -58,6 +58,7 @@ nukex_add_test(test_channel_decomposer unit/calibration/test_channel_decomposer.
 nukex_add_test(test_ed25519_verify unit/calibration/test_ed25519_verify.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_qe_update unit/calibration/test_qe_update.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_qe_update_state unit/calibration/test_qe_update_state.cpp nukex4_calibration nukex4_io nukex4_core)
+nukex_add_test(test_background_neutralization unit/calibration/test_background_neutralization.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_robust_stats  unit/fitting/test_robust_stats.cpp   nukex4_fitting)
 nukex_add_test(test_student_t  unit/fitting/test_student_t_fitter.cpp  nukex4_fitting)
 nukex_add_test(test_gmm        unit/fitting/test_gmm_fitter.cpp       nukex4_fitting)
