@@ -32,6 +32,7 @@
 #include "synthetic_fits.hpp"
 
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -178,4 +179,58 @@ TEST_CASE("LRGB-mono: Phase A routes each filter into its own slot",
     REQUIRE(vox.channel(ri).welford.count() == 2);
     REQUIRE(vox.channel(li).welford.mean == Catch::Approx(0.60f).margin(0.02f));
     REQUIRE(vox.channel(ri).welford.mean == Catch::Approx(0.20f).margin(0.02f));
+}
+
+TEST_CASE("LRGB-mono: the background match is reported for provenance",
+          "[integration][lrgb]") {
+    // What came off each channel is the sky level this session's filters and
+    // light pollution put there. It reaches the FITS header so a user can see
+    // it -- and add it back if they ever want the raw colour.
+    auto paths = write_mono_batch("prov", kLRGB, 3);
+    StackingEngine engine(test_config());
+    auto result = engine.execute(paths, {}, nullptr);
+
+    INFO("error: " << result.error);
+    REQUIRE(result.ok);
+    REQUIRE(result.background_match.size() == 3);
+
+    std::map<std::string, float> got;
+    for (const auto& [name, off] : result.background_match) got[name] = off;
+    // R is the dimmest of the three, so it is the reference and loses nothing.
+    REQUIRE(got.at("R") == Catch::Approx(0.00f).margin(0.02f));
+    REQUIRE(got.at("G") == Catch::Approx(0.15f).margin(0.02f));
+    REQUIRE(got.at("B") == Catch::Approx(0.30f).margin(0.02f));
+    // Luminance is not a chroma slot and must not appear.
+    REQUIRE(got.find("L") == got.end());
+}
+
+TEST_CASE("LRGB-mono: the composed slots and the stacked image agree",
+          "[integration][lrgb]") {
+    // Three windows come out of a run and they must not disagree about the
+    // background. The derived slots feed the composed window and the stacked
+    // image feeds the stretched one, so both are matched in the same place
+    // over the same pixels. Matching them where the slots are BUILT would
+    // measure across the thin, noisy rim that the coverage trim then removes,
+    // and the two windows would part company by exactly that difference.
+    auto paths = write_mono_batch("agree", kLRGB, 3);
+    StackingEngine engine(test_config());
+    auto result = engine.execute(paths, {}, nullptr);
+
+    INFO("error: " << result.error);
+    REQUIRE(result.ok);
+    REQUIRE_FALSE(result.derived.slots.empty());
+
+    const int N = result.stacked.width() * result.stacked.height();
+    REQUIRE(result.derived.width * result.derived.height == N);
+
+    for (const char* nm : {"R", "G", "B"}) {
+        auto it = result.derived.slots.find(nm);
+        INFO("slot " << nm);
+        REQUIRE(it != result.derived.slots.end());
+        const int idx = result.cube->channel_config.slot_index(nm);
+        REQUIRE(idx >= 0);
+        // Same pixel, same value: both planes were matched together.
+        REQUIRE(it->second[8 * result.derived.width + 8]
+                == Catch::Approx(result.stacked.at(8, 8, idx)).margin(0.02f));
+    }
 }

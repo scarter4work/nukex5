@@ -1306,20 +1306,6 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             }
         }
 
-        // The composed window has to agree with the other two, so the
-        // derived chroma slots get the same treatment as the stacked image.
-        // Emission lines are excluded: Ha and OIII are different physical
-        // lines, not a colour balance.
-        {
-            std::vector<float*> chroma;
-            for (const char* nm : {"R", "G", "B"}) {
-                auto it = derived.slots.find(nm);
-                if (it != derived.slots.end() && it->second.size() == static_cast<std::size_t>(N))
-                    chroma.push_back(it->second.data());
-            }
-            match_plane_backgrounds(chroma, static_cast<std::size_t>(N));
-        }
-
         result.derived = std::move(derived);
     }
 
@@ -1387,14 +1373,33 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // space, or not at all -- and it has to come off HERE, because the linear
     // stack is what leaves NukeX for the rest of a user's workflow.
     {
+        // The derived slots are matched HERE, beside the stacked image and
+        // after the trim, not where they were built. Both windows have to
+        // measure their background over the same pixels: matching derived
+        // before the trim would have measured it across the thin, noisy rim
+        // the trim then removed, and the composed window would have disagreed
+        // with the stretched one by exactly that difference.
+        {
+            const std::size_t n = static_cast<std::size_t>(stacked.width())
+                                * static_cast<std::size_t>(stacked.height());
+            std::vector<float*> chroma;
+            for (const char* nm : {"R", "G", "B"}) {
+                auto it = result.derived.slots.find(nm);
+                if (it != result.derived.slots.end() && it->second.size() == n)
+                    chroma.push_back(it->second.data());
+            }
+            match_plane_backgrounds(chroma, n);
+        }
+
         const BackgroundOffsets bg = neutralize_chroma_slots(stacked, cube.channel_config);
         if (bg.applied) {
             std::string msg = "Background matched to the dimmest colour channel; subtracted";
             const std::vector<int> idx = chroma_slot_indices(cube.channel_config);
             for (std::size_t k = 0; k < idx.size() && k < bg.subtracted.size(); ++k) {
+                const std::string& name = cube.channel_config.slot_name(idx[k]);
+                result.background_match.emplace_back(name, bg.subtracted[k]);
                 char buf[64];
-                std::snprintf(buf, sizeof(buf), " %s %.5f",
-                              cube.channel_config.slot_name(idx[k]).c_str(),
+                std::snprintf(buf, sizeof(buf), " %s %.5f", name.c_str(),
                               static_cast<double>(bg.subtracted[k]));
                 msg += buf;
             }

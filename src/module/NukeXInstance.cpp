@@ -84,6 +84,42 @@ pcl::FITSKeywordArray base_output_keywords(
    return ka;
 }
 
+// Append the linear-calibration provenance every NukeX output window carries:
+// what the chroma background match subtracted, and the rectangle the
+// intersection trim kept. Both change the pixels a user is looking at, so
+// both belong in the header rather than only in the Process Console, which
+// scrolls away.
+//
+// Keyword names stay within the 8-character FITS convention the rest of
+// base_output_keywords follows.
+void append_calibration_keywords(
+   pcl::FITSKeywordArray& ka,
+   const nukex::StackingEngine::ExecuteResult& result )
+{
+   if ( !result.background_match.empty() )
+   {
+      pcl::IsoString v;
+      for ( const auto& [name, off] : result.background_match )
+      {
+         if ( !v.IsEmpty() )
+            v += " ";
+         v += pcl::IsoString().Format( "%s=%.5f", name.c_str(),
+                                       static_cast<double>( off ) );
+      }
+      ka.Append( pcl::FITSHeaderKeyword(
+         "NUKEXBGM", pcl::IsoString( "'" ) + v + "'",
+         "Sky level subtracted per colour channel to match backgrounds" ) );
+   }
+
+   if ( result.trim.applied )
+      ka.Append( pcl::FITSHeaderKeyword(
+         "NUKEXTRM",
+         pcl::IsoString().Format( "'x0=%d y0=%d w=%d h=%d'",
+                                  result.trim.x0, result.trim.y0,
+                                  result.trim.width(), result.trim.height() ),
+         "Kept region: covered by every frame (intersection)" ) );
+}
+
 // Phase 8 rating-DB filter-class encoding (rating_db.hpp schema v2).
 //
 // RatingDialog shows the color-balance axis only for classes whose output
@@ -669,9 +705,13 @@ bool NukeXInstance::ExecuteGlobal()
       // Provenance: stamp the FITS header so this window round-trips
       // through Save/Load with NukeX identity, version, and the run's
       // alignment-result counters intact.
-      window.SetKeywords( base_output_keywords(
-          NUKEX_VERSION_STRING, "stacked",
-          result.n_frames_processed, result.n_frames_failed_alignment ) );
+      {
+         pcl::FITSKeywordArray ka = base_output_keywords(
+             NUKEX_VERSION_STRING, "stacked",
+             result.n_frames_processed, result.n_frames_failed_alignment );
+         append_calibration_keywords( ka, result );
+         window.SetKeywords( ka );
+      }
 
       window.Show();
       progress.message( "Stacked image opened." );
@@ -790,6 +830,7 @@ bool NukeXInstance::ExecuteGlobal()
       pcl::FITSKeywordArray cw_ka = base_output_keywords(
           NUKEX_VERSION_STRING, "composed",
           result.n_frames_processed, result.n_frames_failed_alignment );
+      append_calibration_keywords( cw_ka, result );
       cw_ka.Append( pcl::FITSHeaderKeyword(
           "NUKEX_GAMUT_CLIPPED",
           pcl::IsoString().Format( "%lld",
@@ -953,6 +994,7 @@ bool NukeXInstance::ExecuteGlobal()
       pcl::FITSKeywordArray sw_ka = base_output_keywords(
           NUKEX_VERSION_STRING, "stretched",
           result.n_frames_processed, result.n_frames_failed_alignment );
+      append_calibration_keywords( sw_ka, result );
       static const char* kPrimaryNames[] = {
           "Auto", "VeraLux", "GHS", "MTF", "ArcSinh", "Log", "Lupton", "CLAHE"
       };
@@ -1016,9 +1058,13 @@ bool NukeXInstance::ExecuteGlobal()
          }
       }
 
-      nw.SetKeywords( base_output_keywords(
-          NUKEX_VERSION_STRING, "noise",
-          result.n_frames_processed, result.n_frames_failed_alignment ) );
+      {
+         pcl::FITSKeywordArray ka = base_output_keywords(
+             NUKEX_VERSION_STRING, "noise",
+             result.n_frames_processed, result.n_frames_failed_alignment );
+         append_calibration_keywords( ka, result );
+         nw.SetKeywords( ka );
+      }
 
       nw.Show();
       progress.message( "Noise map opened." );

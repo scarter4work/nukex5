@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 #include <unordered_map>
 #include <vector>
 
@@ -124,6 +126,13 @@ public:
         // the first time the wording changed.
         std::string            unknown_filter;
         bool qe_generic_camera_fallback = false; // spec 6.3: INSTRUME not in QE DB, generic Sony OSC QE used
+
+        /// What the chroma background match subtracted, by slot name.
+        ///
+        /// Provenance: this is the sky level this session's filter and light
+        /// pollution put on each colour channel, and a user who wants the raw
+        /// colour back can add it again. Empty when nothing was matched.
+        std::vector<std::pair<std::string, float>> background_match;
 
         /// The rectangle the intersection trim kept, in the PRE-trim
         /// coordinates the cube still uses.
