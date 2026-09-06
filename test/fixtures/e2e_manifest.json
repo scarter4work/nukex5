@@ -28,7 +28,7 @@
         }
       ],
       "golden_frozen": true,
-      "golden_note": "Frozen floor re-cut 2026-09-05 for v5.0.2.0. Two attributed causes, both measured on this corpus rather than assumed. (1) The stacker could not tell an absent sample from a measured black, so every frame's dither excursion was averaged in as darkness: exactly-zero pixels 31,158 -> 0, outermost ring 95% -> 101.4% of interior median. (2) The stretch intensity is now solved against each image's own background instead of shipping one log_D, which moves `stretched` and the three sweep entries. noise and composed follow from stacked. Do not re-cut this floor without the same kind of measurement."
+      "golden_note": "Frozen floor re-cut 2026-09-06 for v5.0.3.0. Three attributed causes, measured on this corpus rather than assumed. (1) Intersection trim: 3840x2160 -> 3628x2019 at origin (162,77), keeping only the rectangle all 65 frames contributed to. Every artefact changes dimensions, which by itself accounts for all seven hashes. (2) The stretch now solves a SHADOW POINT as well as an intensity. Single variable on this corpus's own stacked output, same auto_tune, SP 0 -> 0.14356: p99 0.2626 -> 0.3950, p99.9 0.4059 -> 0.7157, spread 0.1559 -> 0.4657 (2.99x), with the background unmoved at 0.2500. That moves stretched and all three sweep entries. (3) Chroma background matching does NOT touch this corpus -- it is L-only and has no colour slots to match. Named because its absence is a claim too. noise and composed follow from stacked. Do not re-cut this floor without the same kind of measurement."
     },
     {
       "name": "bayer_rgb_m27_2023",

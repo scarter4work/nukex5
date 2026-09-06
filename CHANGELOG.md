@@ -1,5 +1,63 @@
 # NukeX — Changelog
 
+## v5.0.3.0 — 2026-09-06
+
+### Fixed
+- **The auto-stretch now has contrast, not just brightness.** The stretch had
+  no shadow point: it always started from black. The trouble is that the sky
+  is not black. On a 74-frame stack of M63 the background sat at 0.042 and the
+  brightest 0.1% of the galaxy reached only 0.051 — the entire picture lived in
+  a band about 1% wide, riding on a pedestal that used up 98% of the curve.
+  What came out spanned 4% of the available range and looked flat and faint,
+  which is exactly what it was.
+
+  NukeX now solves a shadow point for each image as well as an intensity,
+  clipping just below the noise floor at the same place PixInsight's own screen
+  autostretch does. On that stack the separation between the background and the
+  highlights went from 0.040 to 0.299 — **seven and a half times the contrast**
+  — with the background landing on the same target as before. Positioning and
+  contrast are separate problems, and turning the intensity up only ever solved
+  the first one.
+
+  The same work found the stretch measuring one thing and stretching another:
+  it read the background off the green channel but applied the curve to
+  sensor-weighted luminance. That put every stretched background about 5% above
+  where it was aiming.
+
+- **Broadband stacks are no longer green.** The sky itself is green through a
+  typical filter and sensor — light pollution weighted by where the camera is
+  most sensitive — and that arrives as a level *added* to each channel, not as
+  a colour in the signal. On the M63 stack the background measured 1.54 times
+  brighter in green than in red, while the stars, measured against their own
+  channel's background, agreed to within 7%. The picture was neutral; the sky
+  underneath it was not.
+
+  Nothing downstream can undo that, because every stretch preserves colour
+  ratios faithfully — the finished image was still 1.52 to one after a full
+  round of processing in PixInsight. NukeX now brings each colour channel's sky
+  level down to the dimmest of the three before the stack leaves the program,
+  which is the earliest point it can be fixed and the only one that helps the
+  rest of your workflow. Backgrounds come out neutral to within 0.2%, star
+  colour is untouched, and the Process Console and FITS header both record
+  exactly how much came off each channel, so you can put it back if you want it.
+
+### Changed
+- **The stack is now cropped to the region every frame covered.** A dithered,
+  drifting session does not cover a rectangle: the outer edge of the frame is
+  reached by fewer and fewer exposures, and while those pixels were averaged
+  correctly they were averaged over less data. Measured against an interior
+  noise level of 0.000234, the top ten rows of a 74-frame stack carried 4.7
+  times as much noise and the right-hand columns 3.6 times. At the contrast the
+  new stretch delivers, that reads as a grubby border around the picture.
+
+  NukeX now keeps the largest rectangle every frame contributed to — the same
+  thing you would reach for DynamicCrop to do, done for you and done exactly. A
+  channel that fell short anywhere disqualifies the pixel, so a colour plane
+  pushed off the edge by channel registration is trimmed rather than left as a
+  dead line. On a 65-frame session this took a 3840×2160 stack to 3628×2019.
+  The kept region is recorded in the FITS header.
+
+
 ## v5.0.2.0 — 2026-09-05
 
 ### Added
