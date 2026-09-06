@@ -3,6 +3,7 @@
 #include "nukex/stacker/frame_cache.hpp"
 #include "nukex/stacker/cache_sig.hpp"
 #include "nukex/core/cube.hpp"
+#include "nukex/core/coverage_trim.hpp"
 #include "nukex/core/channel_config.hpp"
 #include "nukex/core/frame_stats.hpp"
 #include "nukex/core/filter.hpp"
@@ -1320,6 +1321,58 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         }
 
         result.derived = std::move(derived);
+    }
+
+    // Intersection: keep only the rectangle every frame contributed to.
+    //
+    // A dithered, drifting session does not cover a rectangle. The outer ring
+    // is reached by fewer and fewer frames, and those pixels are averaged over
+    // less data -- correctly, but it shows. Measured on a 74-frame stack
+    // against an interior noise of 0.000234: the top ten rows carry 0.001093
+    // (4.7x) and the right ten columns 0.000837 (3.6x). At the contrast the
+    // shadow point now delivers, those bands read as a frame around the
+    // picture. The one genuinely dead line -- a red column pushed off the
+    // source by channel registration -- goes with them.
+    {
+        const TrimBounds trim = full_coverage_rect(cube);
+        if (trim.applied) {
+            const int tw = trim.width(), th = trim.height();
+            Image ts = stacked.cropped(trim.x0, trim.y0, tw, th);
+            Image tn = noise_map.cropped(trim.x0, trim.y0, tw, th);
+            Image tq = quality_map.cropped(trim.x0, trim.y0, tw, th);
+            // A refused crop returns an empty image; keeping the untrimmed
+            // frame is the only safe answer, and silence is not.
+            if (ts.empty() || tn.empty() || tq.empty()) {
+                obs.message("Coverage trim skipped: the computed rectangle did "
+                            "not fit the output.");
+            } else {
+                stacked     = std::move(ts);
+                noise_map   = std::move(tn);
+                quality_map = std::move(tq);
+                for (auto& [name, plane] : result.derived.slots) {
+                    if (plane.size() != static_cast<std::size_t>(out_width) *
+                                        static_cast<std::size_t>(out_height))
+                        continue;
+                    std::vector<float> cut(static_cast<std::size_t>(tw) * th);
+                    for (int row = 0; row < th; ++row)
+                        std::copy(plane.begin() + static_cast<std::size_t>(trim.y0 + row) * out_width + trim.x0,
+                                  plane.begin() + static_cast<std::size_t>(trim.y0 + row) * out_width + trim.x0 + tw,
+                                  cut.begin() + static_cast<std::size_t>(row) * tw);
+                    plane.swap(cut);
+                }
+                if (!result.derived.slots.empty()) {
+                    result.derived.width  = tw;
+                    result.derived.height = th;
+                }
+                result.trim = trim;
+                char buf[192];
+                std::snprintf(buf, sizeof(buf),
+                              "Coverage trim: %dx%d -> %dx%d (kept the region every "
+                              "frame contributed to; origin %d,%d).",
+                              out_width, out_height, tw, th, trim.x0, trim.y0);
+                obs.message(buf);
+            }
+        }
     }
 
     // Match the chroma slots' sky levels before anything downstream sees them.

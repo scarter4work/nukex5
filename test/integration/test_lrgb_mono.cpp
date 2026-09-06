@@ -87,14 +87,35 @@ TEST_CASE("LRGB-mono: a four-filter mono batch stacks every channel",
     REQUIRE(result.cube != nullptr);
     REQUIRE(result.cube->channel_config.n_channels == 4);
 
+    // Every frame here is identical and unshifted, so every frame covers every
+    // pixel and the intersection trim must keep the whole field.
+    REQUIRE_FALSE(result.trim.applied);
+
     // Each slot must carry its OWN filter's level, not another filter's and
     // not zero. These are the four values write_mono_batch wrote.
+    //
+    // Read the routing off the cube rather than the stacked image: these
+    // fixtures are UNIFORM, so the whole frame is background, and the chroma
+    // match that runs before the stack is emitted legitimately pulls R, G and
+    // B onto the dimmest of them. The per-slot accumulator is the routing
+    // truth and no colour balance touches it.
     for (const auto& fl : kLRGB) {
         const int idx = result.cube->channel_config.slot_index(fl.filter);
         INFO("slot " << fl.filter << " index " << idx);
         REQUIRE(idx >= 0);
-        REQUIRE(result.stacked.at(8, 8, idx) == Catch::Approx(fl.value).margin(0.02f));
+        REQUIRE(result.cube->at(8, 8).channel(idx).welford.count() == 3);
+        REQUIRE(result.cube->at(8, 8).channel(idx).welford.mean
+                == Catch::Approx(fl.value).margin(0.02f));
     }
+
+    // Luminance is not part of the chroma set, so it reaches the output at its
+    // own level; the three colour slots land together on the dimmest of them.
+    const auto slot_of = [&](const char* n) {
+        return result.cube->channel_config.slot_index(n);
+    };
+    REQUIRE(result.stacked.at(8, 8, slot_of("L")) == Catch::Approx(0.60f).margin(0.02f));
+    for (const char* n : {"R", "G", "B"})
+        REQUIRE(result.stacked.at(8, 8, slot_of(n)) == Catch::Approx(0.20f).margin(0.02f));
 }
 
 TEST_CASE("LRGB-mono: filters with different frame counts do not borrow "

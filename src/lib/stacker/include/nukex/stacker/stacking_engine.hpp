@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nukex/core/coverage_trim.hpp"
 #include "nukex/io/image.hpp"
 #include "nukex/alignment/frame_aligner.hpp"
 #include "nukex/classify/weight_computer.hpp"
@@ -123,6 +124,15 @@ public:
         // the first time the wording changed.
         std::string            unknown_filter;
         bool qe_generic_camera_fallback = false; // spec 6.3: INSTRUME not in QE DB, generic Sony OSC QE used
+
+        /// The rectangle the intersection trim kept, in the PRE-trim
+        /// coordinates the cube still uses.
+        ///
+        /// `stacked`, `noise_map`, `quality_map` and `derived` are already cut
+        /// to it. `cube` is NOT: cropping it would mean copying a record
+        /// measured in gigabytes to save a one-pixel border. Anything that
+        /// reads the cube alongside a stacked pixel must add (x0, y0).
+        TrimBounds trim;
 
         ExecuteResult();
         ~ExecuteResult();
