@@ -1,5 +1,63 @@
 # NukeX — Changelog
 
+## v5.0.3.2 — 2026-09-07
+
+### Fixed
+- **Stretched images have colour again.** Every stretched image came out
+  essentially grey, and the colour was in the data the whole time. On a
+  156-frame stack of M63 the linear result carried signal saturation 0.355 with
+  channel ratios R 1.000 / G 0.997 / B 0.721 — agreeing closely with the same
+  target integrated in PixInsight — and the stretch delivered 0.059 at
+  1.000 / 1.000 / 0.965.
+
+  The stretch took each pixel's colour as the ratio of its total channel
+  values. Astronomical signal rides on a sky pedestal far larger than itself,
+  and NukeX deliberately makes that pedestal neutral, so the ratio of the
+  totals is near enough 1:1:1 however colourful the signal underneath is. The
+  stretch was faithfully preserving the colour of the sky.
+
+  Each channel now goes through the same curve independently — which is what a
+  screen autostretch does, and why those have colour. Measured on that stack,
+  saturation went 0.059 to 0.181 with the background still neutral and still
+  on target. Star cores still go white: the convergence control keeps its
+  meaning and blends the brightest pixels toward neutral.
+
+- **The stretched image is no longer part-transparent.** For an OSC or LRGB
+  stack NukeX built the stretched window from its internal working channels,
+  which include a synthesized luminance alongside R, G and B. A four-channel
+  colour image means the fourth channel is an *alpha* channel, so that
+  synthesized luminance was being handed to PixInsight as transparency —
+  unstretched, on every colour run. The stretched image is now the
+  colour-composed one, three channels, with no stray plane.
+
+- **Frames taken after a meridian flip are stacked where they belong.** Carried
+  forward from v5.0.3.1 for anyone who skipped it.
+
+### Changed
+- **Stacking is about a third faster.** A 156-frame 24 MP batch went from 28
+  minutes to 19 (1.50x), with the frame-loading phase itself 1.87x faster.
+
+  The frame cache is laid out pixel-major, so writing one frame touches every
+  page of the cache file — 10.4 GB of pages for the 66 MB that frame actually
+  contains — and NukeX asked the operating system to flush the whole file after
+  every single frame. Measured during a run: 1,704 MB written to disk per
+  cached frame, twenty-six times the data involved, and it got worse as the
+  cache filled. Per-frame cost had been climbing from 3.9 s at the start of a
+  run to 13.4 s near the end; it is now flat at about 3.5 s.
+
+  Writeback is now scheduled periodically rather than per frame, with a flush
+  at the end of the phase so memory is still bounded. Nothing about the stacked
+  result changes — the regression corpus comes back bit-identical.
+
+- **NukeX no longer sizes its working buffers to half of free memory.** That
+  measure counts reclaimable disk cache, which NukeX itself fills, so it
+  overstated what was actually available and could reserve 13 GB on a 30 GB
+  machine. Bounded now. Buffer size has never affected the result.
+
+- The Process Console opens with a NukeX banner, and each frame's measurement
+  now gets its own line — the progress percentage used to overwrite it
+  mid-word.
+
 ## v5.0.3.1 — 2026-09-07
 
 ### Fixed
