@@ -16,6 +16,61 @@ MANIFEST="${REPO}/test/fixtures/e2e_manifest.json"
 BUILD_DIR="${NUKEX_BUILD_DIR:-${REPO}/build}"
 E2E_LOG="${BUILD_DIR}/e2e.log"
 
+# ── Borrow the module, never leave it ────────────────────────────────────
+#
+# PixInsight only loads modules from <PI>/bin, so verifying a build means
+# putting one there. It does NOT mean leaving one there. The rule, from the
+# user, 2026-09-07:
+#
+#   "the rule is you don't install. you create the image that i download"
+#   "so then install it, run it, but remove it. i don't test till i pull it
+#    from github"
+#
+# A build left in <PI>/bin silently becomes the thing being tested, and the
+# release is then never proved through the path a real user takes. So the
+# install is scoped to this script and torn down in an EXIT trap, which fires
+# on failure, on the timeout, and on Ctrl-C.
+#
+# Never sudo: /opt/PixInsight/bin is user-owned, and a root-owned module is
+# one PixInsight's own updater cannot replace.
+PI_BIN="${NUKEX_PI_BIN:-/opt/PixInsight/bin}"
+MODULE_SRC="${BUILD_DIR}/src/module/NukeX-pxm.so"
+MODULE_DST="${PI_BIN}/NukeX-pxm.so"
+SIGN_DST="${PI_BIN}/NukeX-pxm.xsgn"
+
+if [ -e "${MODULE_DST}" ] || [ -e "${SIGN_DST}" ]; then
+    echo "ERROR: a module is already installed at ${MODULE_DST}."
+    echo "Nothing should live there between runs -- remove it and re-run,"
+    echo "or say why it is there. Refusing to overwrite it silently."
+    exit 1
+fi
+if [ ! -f "${MODULE_SRC}" ]; then
+    echo "ERROR: ${MODULE_SRC} not found. Build the module first."
+    exit 1
+fi
+
+KEYS="${NUKEX_SIGN_KEYS:-/home/scarter4work/projects/keys/scarter4work_keys.xssk}"
+if [ -n "${NUKEX_SIGN_PASS:-}" ]; then
+    PASS="${NUKEX_SIGN_PASS}"
+elif [ -r "${NUKEX_SIGN_PASS_FILE:-/tmp/.pi_codesign_pass}" ]; then
+    PASS="$(cat "${NUKEX_SIGN_PASS_FILE:-/tmp/.pi_codesign_pass}")"
+else
+    echo "ERROR: neither NUKEX_SIGN_PASS env nor NUKEX_SIGN_PASS_FILE is set."
+    echo "Set one, or put the password in /tmp/.pi_codesign_pass."
+    exit 1
+fi
+
+uninstall_module() {
+    rm -f "${MODULE_DST}" "${SIGN_DST}"
+    echo "NukeX E2E: module removed from ${PI_BIN} (nothing is left installed)."
+}
+trap uninstall_module EXIT
+
+echo "NukeX E2E: borrowing ${MODULE_SRC} -> ${MODULE_DST} for this run only."
+cp "${MODULE_SRC}" "${MODULE_DST}"
+"${PI_BIN}/PixInsight.sh" --sign-module-file="${MODULE_DST}" \
+    --xssk-file="${KEYS}" --xssk-password="${PASS}" >/dev/null
+
 # Run a single case by name. The full v5 corpus takes hours across four
 # stacks of real data; being able to do one case at a time keeps a long run
 # from being all-or-nothing.
