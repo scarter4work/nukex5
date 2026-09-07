@@ -513,6 +513,91 @@ TEST_CASE("VeraLux: the shadow point cannot clip away a background gradient",
     REQUIRE(clipped <= 0.007);
 }
 
+/// Saturation of the BACKGROUND-SUBTRACTED signal in the top 1% of pixels.
+/// Subtracting each channel's own sky first is the whole point: the colour of
+/// astronomical data lives in the excess over the sky, never in the ratio of
+/// the totals.
+static float signal_saturation(const Image& img) {
+    const int n = img.width() * img.height();
+    const float* c[3] = { img.channel_data(0), img.channel_data(1), img.channel_data(2) };
+    float bg[3];
+    for (int ch = 0; ch < 3; ++ch) {
+        std::vector<float> v(c[ch], c[ch] + n);
+        std::nth_element(v.begin(), v.begin() + n / 2, v.end());
+        bg[ch] = v[n / 2];
+    }
+    std::vector<float> lum(n);
+    for (int i = 0; i < n; ++i)
+        lum[i] = 0.2126f * c[0][i] + 0.7152f * c[1][i] + 0.0722f * c[2][i];
+    std::vector<float> sorted = lum;
+    const std::size_t cut = static_cast<std::size_t>(0.99 * (n - 1));
+    std::nth_element(sorted.begin(), sorted.begin() + cut, sorted.end());
+    const float thresh = sorted[cut];
+
+    double total = 0.0; int count = 0;
+    for (int i = 0; i < n; ++i) {
+        if (lum[i] < thresh) continue;
+        const float r = c[0][i] - bg[0], g = c[1][i] - bg[1], b = c[2][i] - bg[2];
+        const float mx = std::max(r, std::max(g, b));
+        const float mn = std::min(r, std::min(g, b));
+        if (mx > 1e-8f) { total += (mx - mn) / mx; ++count; }
+    }
+    return count ? static_cast<float>(total / count) : 0.0f;
+}
+
+TEST_CASE("VeraLux: a coloured signal on a neutral sky keeps its colour",
+          "[stretch][veralux]") {
+    // The bug this pins: apply() took each pixel's chromaticity as the ratio
+    // of its TOTAL channel values, r/L. Astronomical signal rides on a sky
+    // pedestal far larger than itself, and that pedestal is neutral -- v5.0.3.0
+    // deliberately made it neutral -- so r/L is ~1:1:1 no matter what colour
+    // the signal is. Every stretched image came out grey.
+    //
+    // Measured on a 156-frame OSC stack of M63: the linear stack carried
+    // signal saturation 0.355 with ratios R 1.000 G 0.997 B 0.721 -- matching
+    // the user's own PixInsight integration at 0.337 -- and the stretch
+    // delivered 0.059 at 1.000 / 1.000 / 0.965. The colour was in the data
+    // the whole time.
+    const float sky = 0.0278f, sigma = 0.0004f;
+    Image img(256, 256, 3);
+    // A neutral sky, plus a disc whose excess is strongly red-weighted.
+    //
+    // The excess is ~11% of the sky, which is the regime that matters: on the
+    // real stack the signal is a small perturbation on a large neutral
+    // pedestal, so the ratio of the TOTALS is nearly 1:1:1 however colourful
+    // the signal is. A fixture whose signal rivals its sky does not reproduce
+    // the bug at all -- the first draft of this test used a 43% excess and
+    // passed against the broken code.
+    const float excess[3] = { 0.0030f, 0.0030f, 0.0015f };   // 1 : 1 : 0.5
+    for (int y = 0; y < 256; ++y)
+        for (int x = 0; x < 256; ++x) {
+            const int i = y * 256 + x;
+            const float dx = static_cast<float>(x) - 128.0f;
+            const float dy = static_cast<float>(y) - 128.0f;
+            const float f = std::exp(-(dx * dx + dy * dy) / (2.0f * 45.0f * 45.0f));
+            for (int ch = 0; ch < 3; ++ch)
+                img.channel_data(ch)[i] =
+                    sky + sigma * test_gauss(static_cast<std::uint64_t>(ch * 7919 + i))
+                        + excess[ch] * f;
+        }
+
+    const float before = signal_saturation(img);
+
+    VeraLuxStretch v;
+    v.auto_tune(img, 0.25f);
+    v.apply(img);
+
+    const float after = signal_saturation(img);
+    INFO("signal saturation before " << before << ", after " << after
+         << " (ratio " << (after / before) << ")");
+
+    // The stretch may not preserve saturation exactly -- it is a non-linear
+    // map -- but it must not throw the colour away. Measured on the real
+    // stack the old code retained 18% of it; per-channel retains 56%.
+    REQUIRE(before > 0.2f);          // the fixture really is coloured
+    REQUIRE(after > 0.4f * before);
+}
+
 TEST_CASE("VeraLux: auto_tune tunes the luminance it actually stretches, not "
           "one channel of it", "[stretch][veralux]") {
     // apply() stretches L = wR*R + wG*G + wB*B; auto_tune must solve against

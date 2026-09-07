@@ -67,6 +67,27 @@ float VeraLuxStretch::auto_tune(const Image& img, float target_background) {
         sample.push_back(colour ? (w_R * c0[i] + w_G * c1[i] + w_B * c2[i])
                                 : c0[i]);
     if (sample.empty()) return log_D;
+
+    // The per-channel background too. apply() stretches each channel with the
+    // curve and mixes the RESULTS, and the curve is concave, so the mean of
+    // the stretched channels is not the stretched mean -- on an imbalanced
+    // background they differ by a third of the output range. Solving against
+    // hms(L) alone would put the background wherever Jensen's inequality
+    // happened to leave it. Tune what apply() actually produces.
+    float bg_ch[3] = {0.0f, 0.0f, 0.0f};
+    if (colour) {
+        const float* ch[3] = {c0, c1, c2};
+        std::vector<float> cs;
+        cs.reserve(sample.size());
+        for (int k = 0; k < 3; ++k) {
+            cs.clear();
+            for (int i = 0; i < n; i += stride) cs.push_back(ch[k][i]);
+            const std::size_t m = cs.size() / 2;
+            std::nth_element(cs.begin(), cs.begin() + m, cs.end());
+            bg_ch[k] = cs[m];
+        }
+    }
+
     const std::size_t mid = sample.size() / 2;
     std::nth_element(sample.begin(), sample.begin() + mid, sample.end());
     const float bg = sample[mid];
@@ -113,20 +134,33 @@ float VeraLuxStretch::auto_tune(const Image& img, float target_background) {
              ? std::max(0.0f, std::min(bg - 2.8f * sigma, clip_bound))
              : 0.0f;
 
+    // The luminance apply() will actually emit for the background, given the
+    // current SP and log_D. Mono is the plain curve; colour mirrors the
+    // per-channel blend exactly.
+    const auto background_out = [&]() -> float {
+        const float Ls = apply_scalar(bg);
+        if (!colour) return Ls;
+        const float kk = std::pow(Ls, convergence_power);
+        const float mixed = w_R * apply_scalar(bg_ch[0])
+                          + w_G * apply_scalar(bg_ch[1])
+                          + w_B * apply_scalar(bg_ch[2]);
+        return mixed * (1.0f - kk) + Ls * kk;
+    };
+
     // A band too tight to clip: if no intensity in range can still put the
     // background on target -- which happens when the noise floor is so narrow
     // that (bg - SP) underflows the curve -- clipping buys nothing and costs
     // the positioning. Fall back to the shadow point at black.
     log_D = 7.0f;
-    if (apply_scalar(bg) < target_background) SP = 0.0f;
+    if (background_out() < target_background) SP = 0.0f;
 
-    // apply_scalar is monotonically increasing in log_D at fixed x, so a
+    // background_out is monotonically increasing in log_D at fixed input, so a
     // bisection is exact enough in a handful of steps.
     float lo = 0.0f, hi = 7.0f;
     for (int i = 0; i < 40; ++i) {
         const float mid_ld = 0.5f * (lo + hi);
         log_D = mid_ld;
-        if (apply_scalar(bg) < target_background) lo = mid_ld; else hi = mid_ld;
+        if (background_out() < target_background) lo = mid_ld; else hi = mid_ld;
     }
     log_D = 0.5f * (lo + hi);
     if (!std::isfinite(log_D)) log_D = saved;
@@ -154,7 +188,24 @@ void VeraLuxStretch::apply(Image& img) const {
         return;
     }
 
-    // Multi-channel: color vector preservation with convergence-to-white
+    // Multi-channel: stretch each channel with the SAME curve, then converge
+    // the brightest pixels toward neutral.
+    //
+    // This used to take each pixel's colour as the ratio of its TOTAL channel
+    // values, r/L, and rescale that by the stretched luminance. It threw the
+    // colour away. Astronomical signal rides on a sky pedestal far larger than
+    // itself, and that pedestal is neutral -- v5.0.3.0 deliberately made it
+    // neutral -- so r/L is ~1:1:1 however colourful the signal is. Measured on
+    // a 156-frame OSC stack of M63: the linear stack carried signal saturation
+    // 0.355 at R 1.000 G 0.997 B 0.721, agreeing with the user's own
+    // PixInsight integration (0.337), and this loop delivered 0.059 at
+    // 1.000 / 1.000 / 0.965. Grey, from data that was never grey.
+    //
+    // Subtracting the pedestal before taking the ratio is NOT the fix: the
+    // denominator goes to zero at sky level, so background noise is amplified
+    // into violent chroma speckle (measured 0.63 "saturation", almost all of
+    // it noise). Stretching each channel independently has no division at all,
+    // which is exactly what STF does and why STF images have colour.
     float* R = img.channel_data(0);
     float* G = img.channel_data(1);
     float* B = img.channel_data(2);
@@ -170,22 +221,22 @@ void VeraLuxStretch::apply(Image& img) const {
         // black, not keep its linear value.
         if (L <= SP || L < eps) { R[i] = G[i] = B[i] = 0.0f; continue; }
 
-        // Chromaticity ratios (color direction)
-        float r_ratio = r / (L + eps);
-        float g_ratio = g / (L + eps);
-        float b_ratio = bv / (L + eps);
-
-        // Stretch luminance
-        float L_stretched = hms_curve(L, D, b, SP, den);
+        // The same curve, applied to each channel and to the luminance.
+        float L_stretched = hms_curve(L,  D, b, SP, den);
+        float r_stretched = hms_curve(r,  D, b, SP, den);
+        float g_stretched = hms_curve(g,  D, b, SP, den);
+        float b_stretched = hms_curve(bv, D, b, SP, den);
 
         // Convergence factor: bright pixels transition toward white
         // k approaches 1 for bright pixels, 0 for faint pixels
         float k = std::pow(L_stretched, convergence_power);
 
-        // Reconstruct: blend between original color ratio and white (1,1,1)
-        R[i] = std::clamp(L_stretched * (r_ratio * (1.0f - k) + k), 0.0f, 1.0f);
-        G[i] = std::clamp(L_stretched * (g_ratio * (1.0f - k) + k), 0.0f, 1.0f);
-        B[i] = std::clamp(L_stretched * (b_ratio * (1.0f - k) + k), 0.0f, 1.0f);
+        // Reconstruct: blend each stretched channel toward the stretched
+        // luminance, which is neutral. k -> 1 at a star core, so cores still
+        // go white; k -> 0 over the faint signal, which keeps its colour.
+        R[i] = std::clamp(r_stretched * (1.0f - k) + L_stretched * k, 0.0f, 1.0f);
+        G[i] = std::clamp(g_stretched * (1.0f - k) + L_stretched * k, 0.0f, 1.0f);
+        B[i] = std::clamp(b_stretched * (1.0f - k) + L_stretched * k, 0.0f, 1.0f);
     }
 }
 
