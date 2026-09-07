@@ -64,11 +64,6 @@ public:
                       const ChannelTransforms& channels,
                       CoverageMask& coverage);
 
-    /// Correct a meridian-flipped homography by pre-multiplying with
-    /// a 180-degree rotation about the image center.
-    static HomographyMatrix correct_meridian_flip(
-        const HomographyMatrix& H, int width, int height);
-
 private:
     /// Shared body of the warp overloads. `coverage` may be null when the
     /// caller does not need to know which pixels were sampled.

@@ -101,18 +101,21 @@ TEST_CASE("HomographyComputer: warp with identity preserves image", "[homography
     }
 }
 
-TEST_CASE("HomographyComputer: meridian flip correction", "[homography]") {
-    // 180-degree rotation
+TEST_CASE("HomographyComputer: a 180-degree homography is left alone",
+          "[homography]") {
+    // This used to assert the opposite: that a 180-degree rotation must be
+    // "corrected" to identity. That was the bug. A flipped frame's homography
+    // IS a 180-degree rotation -- that rotation is what maps it onto the
+    // reference -- so turning it into identity lays the frame down upside
+    // down. Detection stays; the repair is gone. See the [meridian] case in
+    // test_frame_aligner.cpp for the behaviour that matters.
     HomographyMatrix H;
     H(0,0) = -1; H(0,1) = 0; H(0,2) = 99;
     H(1,0) = 0;  H(1,1) = -1; H(1,2) = 79;
     H(2,0) = 0;  H(2,1) = 0;  H(2,2) = 1;
 
     REQUIRE(H.is_meridian_flip() == true);
-
-    auto corrected = HomographyComputer::correct_meridian_flip(H, 100, 80);
-    // After correction, should be approximately identity
-    REQUIRE(corrected.is_identity(1.0f) == true);
+    REQUIRE(H.is_identity(1.0f) == false);
 }
 
 TEST_CASE("StarMatcher: identical non-collinear catalogs match themselves", "[star_matcher]") {

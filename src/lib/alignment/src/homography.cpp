@@ -403,49 +403,4 @@ Image HomographyComputer::warp_impl(const Image& source, const HomographyMatrix&
     return output;
 }
 
-HomographyMatrix HomographyComputer::correct_meridian_flip(
-    const HomographyMatrix& H, int width, int height) {
-    // Pre-multiply H with 180-degree rotation F about image center to remove the flip.
-    //
-    // H maps source -> reference and contains a 180-degree flip component.
-    // Decompose H as H = F * T where F is the flip and T is the residual transform.
-    // We want to recover T = F_inv * H. Since F is a 180-degree rotation about
-    // the image center, F is its own inverse (F * F = I), so T = F * H.
-    //
-    // This is why pre-multiplication (F * H) is the correct order:
-    //   F * H = F * (F * T) = (F * F) * T = I * T = T
-    //
-    // Note: H * F would give (F * T) * F = F * T * F which is NOT T in general,
-    // because matrix multiplication is not commutative.
-    //
-    // flip F = [-1  0  w-1]
-    //          [ 0 -1  h-1]
-    //          [ 0  0    1]
-    Eigen::Matrix3f He, Fe;
-    for (int r = 0; r < 3; r++)
-        for (int c = 0; c < 3; c++)
-            He(r, c) = H(r, c);
-
-    Fe << -1, 0, static_cast<float>(width - 1),
-           0, -1, static_cast<float>(height - 1),
-           0,  0, 1;
-
-    Eigen::Matrix3f result = Fe * He;
-
-    HomographyMatrix corrected;
-    for (int r = 0; r < 3; r++)
-        for (int c = 0; c < 3; c++)
-            corrected(r, c) = result(r, c);
-
-    // Normalize
-    if (std::abs(corrected(2, 2)) > 1e-10f) {
-        float s = 1.0f / corrected(2, 2);
-        for (int r = 0; r < 3; r++)
-            for (int c = 0; c < 3; c++)
-                corrected(r, c) *= s;
-    }
-
-    return corrected;
-}
-
 } // namespace nukex

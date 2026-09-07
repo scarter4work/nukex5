@@ -28,6 +28,80 @@ static Image create_star_field(int w, int h,
     return img;
 }
 
+/// The star list a meridian flip produces: every star rotated 180 degrees
+/// about the frame centre, which is exactly what the mount does when it
+/// swings the camera through the meridian.
+static std::vector<std::tuple<float,float,float>> rotate_180(
+    const std::vector<std::tuple<float,float,float>>& stars, int w, int h) {
+    std::vector<std::tuple<float,float,float>> out;
+    for (const auto& [x, y, a] : stars)
+        out.emplace_back(static_cast<float>(w - 1) - x,
+                         static_cast<float>(h - 1) - y, a);
+    return out;
+}
+
+/// Brightest pixel within `r` of (x,y), as a multiple of the background.
+static float peak_near(const Image& img, float x, float y, int r = 6) {
+    float best = 0.0f;
+    for (int dy = -r; dy <= r; ++dy)
+        for (int dx = -r; dx <= r; ++dx) {
+            int px = static_cast<int>(x + 0.5f) + dx;
+            int py = static_cast<int>(y + 0.5f) + dy;
+            if (px < 0 || px >= img.width() || py < 0 || py >= img.height()) continue;
+            best = std::max(best, img.at(px, py, 0));
+        }
+    return best;
+}
+
+TEST_CASE("FrameAligner: a meridian-flipped frame lands on the reference, "
+          "not rotated away from it", "[aligner][meridian]") {
+    // Measured on the user's 114-frame M63: 74 frames at one rotation, 40 at
+    // the other. In the stack, EVERY bright star came with a companion hole
+    // at its exact 180-degree reflection about the frame centre -- 64 such
+    // regions, each ~130x the median noise, the stacked value 3% low. The raw
+    // frames have nothing at the ghost positions: blank sky, indistinguishable
+    // from a control patch. So the 40 flipped frames were being laid down
+    // rotated 180 degrees from where they belong, and the stacker's own
+    // robustness hid it by rejecting them as the minority -- leaving the holes
+    // the user saw as "black circles where the stars should be".
+    const int W = 240, H = 200;
+    // Every star is kept clear of EVERY star's 180-degree reflection, so a
+    // probe at a reflection can only ever see background. Without that the
+    // test lies: a neighbour 7 px from a reflection reads as a ghost.
+    std::vector<std::tuple<float,float,float>> stars = {
+        {28, 32, 0.9f}, {95, 45, 0.75f}, {60, 78, 0.85f}, {33, 120, 0.7f},
+        {104, 128, 0.8f}, {72, 160, 0.65f}, {20, 96, 0.6f}, {110, 96, 0.72f},
+        {48, 55, 0.55f}, {88, 175, 0.68f}
+    };
+
+    Image reference = create_star_field(W, H, stars);
+    Image flipped   = create_star_field(W, H, rotate_180(stars, W, H));
+
+    FrameAligner::Config config;
+    config.star_config.snr_multiplier = 3.0f;
+    config.match_config.max_distance = 10.0f;
+    FrameAligner aligner(config);
+    aligner.align(reference, 0);
+    auto result = aligner.align(flipped, 1);
+
+    REQUIRE(result.alignment.alignment_failed == false);
+
+    // A flip is a real 180-degree rotation between frame and reference, and
+    // the homography that maps one onto the other necessarily contains it.
+    // The frame must come back UNDONE: stars where the reference has stars.
+    const float bg = 0.05f;
+    for (const auto& [sx, sy, amp] : stars) {
+        const float here  = peak_near(result.image, sx, sy);
+        const float ghost = peak_near(result.image, static_cast<float>(W - 1) - sx,
+                                                    static_cast<float>(H - 1) - sy);
+        INFO("star (" << sx << "," << sy << "): peak here " << here
+             << ", peak at its 180-degree reflection " << ghost
+             << ", background " << bg);
+        REQUIRE(here > bg + 0.3f * amp);
+        REQUIRE(ghost < bg + 0.3f * amp);
+    }
+}
+
 TEST_CASE("FrameAligner: first frame becomes reference", "[aligner]") {
     std::vector<std::tuple<float,float,float>> stars = {
         {50, 50, 0.8f}, {150, 50, 0.7f}, {100, 100, 0.9f},

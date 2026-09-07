@@ -32,10 +32,6 @@ bool FrameAligner::try_chain(const StarCatalog& stars, int frame_index,
         AlignmentResult step = HomographyComputer::compute(
             stars, a->catalog, matches, config_.homography_config);
         if (step.alignment_failed) continue;
-        if (step.is_meridian_flipped) {
-            step.H = HomographyComputer::correct_meridian_flip(
-                step.H, ref_width_, ref_height_);
-        }
 
         // H_ref<-frame = H_ref<-anchor * H_anchor<-frame. Composing the
         // TRANSFORMS, so the frame is still resampled exactly once; chained
@@ -128,11 +124,15 @@ FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_ind
     result.alignment = HomographyComputer::compute(
         result.stars, ref_catalog_, matches, config_.homography_config);
 
-    // Handle meridian flip
-    if (result.alignment.is_meridian_flipped && !result.alignment.alignment_failed) {
-        result.alignment.H = HomographyComputer::correct_meridian_flip(
-            result.alignment.H, ref_width_, ref_height_);
-    }
+    // A meridian flip needs no correction. The matcher is rotation-invariant,
+    // so the homography it solves for a flipped frame ALREADY contains the
+    // 180-degree rotation -- that rotation is what maps the frame onto the
+    // reference. `is_meridian_flipped` is therefore a report, not a repair:
+    // it is carried into frame_stats and logged, and nothing transforms H.
+    //
+    // Stripping the rotation back out (which this did until v5.0.3.1) lays
+    // the frame down rotated 180 degrees from where it belongs, and the
+    // aligner reports success while doing it.
 
     // A single reference cannot bridge a long session. If the direct match
     // failed, try to reach the reference through an already-aligned
