@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Scott Carter. MIT License.
 
 #include "NukeXProgress.h"
+#include "NukeXConsoleText.hpp"
 #include <pcl/String.h>
 #include <cstdio>
 #include <ctime>
@@ -147,9 +148,12 @@ void NukeXProgress::advance( int steps, const std::string& detail )
 
    if ( !detail.empty() )
    {
-      String indent;
-      for ( int i = 0; i < depth_; i++ ) indent += "  ";
-      console_.WriteLn( indent + String( detail.c_str() ) );
+      // <end><cbr> first, exactly as begin_phase() does.  StandardStatus
+      // writes its percentage IN PLACE on the current line, so a detail
+      // written without a leading break gets eaten mid-word:
+      //   "frame 4: 200 stars, FWHM 3.  6%    frame 5: ..."
+      console_.WriteLn( String::UTF8ToUTF16(
+         nukex::console_detail_line( depth_, detail ).c_str() ) );
       console_.Flush();
    }
 

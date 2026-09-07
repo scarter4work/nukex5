@@ -7,6 +7,7 @@
 #include "NukeXVersion.h"
 
 #include "NukeXProgress.h"
+#include "NukeXConsoleText.hpp"
 #include "RatingDialog.h"
 #include "FilterDialog.h"
 #include "nukex/io/filter_alias.hpp"
@@ -488,6 +489,27 @@ bool NukeXInstance::CanExecuteGlobal( String& whyNot ) const
 
 bool NukeXInstance::ExecuteGlobal()
 {
+   // Banner first, before anything else reaches the console.  It is UTF-8
+   // block art, so it has to go through UTF8ToUTF16 -- String(const char*)
+   // would decode it as ISO-8859-1 and ship garbage.  One WriteLn per row,
+   // because the rows are joined with '\n' rather than console <br> tags.
+   {
+      pcl::Console console;
+      const std::string banner = nukex::nukex_banner();
+      for ( std::size_t start = 0; start <= banner.size(); )
+      {
+         const std::size_t nl  = banner.find( '\n', start );
+         const std::size_t len = ( nl == std::string::npos ) ? std::string::npos
+                                                             : nl - start;
+         console.WriteLn( String::UTF8ToUTF16( banner.substr( start, len ).c_str() ) );
+         if ( nl == std::string::npos )
+            break;
+         start = nl + 1;
+      }
+      console.WriteLn( String() );
+      console.Flush();
+   }
+
    NukeXProgress progress;
    progress.message( "NukeX " NUKEX_VERSION_STRING " -- Distribution-Fitted Stacking" );
    progress.message( String().Format( "Processing %zu light frame(s)", lightFrames.Length() ).ToUTF8().c_str() );

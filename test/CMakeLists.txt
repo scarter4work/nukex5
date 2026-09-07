@@ -123,6 +123,7 @@ nukex_add_test(test_fit_heartbeat unit/gpu/test_fit_heartbeat.cpp nukex4_gpu)
 
 # Module-layer tests (auto-selector, stretch factory, Phase 8 fallback)
 add_library(nukex4_module_testlib OBJECT
+    "${CMAKE_SOURCE_DIR}/src/module/NukeXConsoleText.cpp"
     "${CMAKE_SOURCE_DIR}/src/module/stretch_auto_selector.cpp"
     "${CMAKE_SOURCE_DIR}/src/module/stretch_factory.cpp"
 )
@@ -135,6 +136,7 @@ target_link_libraries(nukex4_module_testlib PUBLIC nukex4_stretch nukex4_io)
 
 nukex_add_test(test_stretch_auto_selector unit/module/test_stretch_auto_selector.cpp nukex4_module_testlib)
 nukex_add_test(test_stretch_factory unit/module/test_stretch_factory.cpp nukex4_module_testlib)
+nukex_add_test(test_console_text unit/module/test_console_text.cpp nukex4_module_testlib)
 nukex_add_test(test_phase8_fallback unit/module/test_phase8_fallback.cpp nukex4_stretch nukex4_learning sqlite3_vendored)
 
 # Integration tests (Task 9 onward) — gated under [.integration] so they

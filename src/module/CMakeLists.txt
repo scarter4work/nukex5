@@ -17,6 +17,7 @@ set(MODULE_SOURCES
     NukeXInterface.cpp
     NukeXParameters.cpp
     NukeXProgress.cpp
+    NukeXConsoleText.cpp
     QEFetcher.cpp
     RatingDialog.cpp
     FilterDialog.cpp
