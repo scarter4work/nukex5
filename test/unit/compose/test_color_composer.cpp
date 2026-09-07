@@ -1,5 +1,6 @@
 #include "catch_amalgamated.hpp"
 #include "nukex/compose/color_composer.hpp"
+#include "nukex/compose/compose_image.hpp"
 
 #include <cmath>
 
@@ -287,4 +288,76 @@ TEST_CASE("ColorComposer: a narrowband-only pixel has luminance of its own",
     sRGBPixel out2 = c2.compose_pixel(s2);
     REQUIRE((out2.r + out2.g + out2.b) > (out.r + out.g + out.b));
     REQUIRE(c2.last_pixel_emission_a() == Catch::Approx(c.last_pixel_emission_a()).margin(1e-9));
+}
+
+// ══════════════════════════════════════════════════════════
+// compose_slots_to_image — the colour-science image the stretch consumes
+// ══════════════════════════════════════════════════════════
+
+static std::unordered_map<std::string, std::vector<float>>
+slot_planes(int n, float L, float R, float G, float B) {
+    return { {"L", std::vector<float>(n, L)}, {"R", std::vector<float>(n, R)},
+             {"G", std::vector<float>(n, G)}, {"B", std::vector<float>(n, B)} };
+}
+
+TEST_CASE("compose_slots_to_image: three channels at the slot dimensions",
+          "[color_composer]") {
+    ColorComposer c;
+    Image img = compose_slots_to_image(4, 3, slot_planes(12, 0.03f, 0.03f, 0.03f, 0.03f), c);
+    REQUIRE(img.width() == 4);
+    REQUIRE(img.height() == 3);
+    REQUIRE(img.n_channels() == 3);
+}
+
+TEST_CASE("compose_slots_to_image: grey slots keep their level, so the result "
+          "can be stretched directly", "[color_composer]") {
+    // compose_pixel is an identity on the grey axis -- measured at 0.5, 0.1,
+    // 0.05, 0.03, 0.027, 0.01 and 0.003, ratio 1.0000 at every one. That is
+    // what makes this image safe to hand to the stretch: it is on the SAME
+    // linear scale as the slots, with no transfer function to undo. If this
+    // ever stops holding, stretching the composed image starts applying a
+    // curve on top of a curve.
+    ColorComposer c;
+    for (float v : {0.5f, 0.03f, 0.003f}) {
+        Image img = compose_slots_to_image(2, 2, slot_planes(4, v, v, v, v), c);
+        REQUIRE(!img.empty());
+        for (int ch = 0; ch < 3; ++ch)
+            REQUIRE(img.channel_data(ch)[0] == Catch::Approx(v).margin(1e-4));
+    }
+}
+
+TEST_CASE("compose_slots_to_image: colour in the slots reaches the channels",
+          "[color_composer]") {
+    ColorComposer c;
+    Image img = compose_slots_to_image(2, 2, slot_planes(4, 0.030f, 0.030f, 0.022f, 0.020f), c);
+    REQUIRE(!img.empty());
+    const float r = img.channel_data(0)[0];
+    const float g = img.channel_data(1)[0];
+    const float b = img.channel_data(2)[0];
+    INFO("r=" << r << " g=" << g << " b=" << b);
+    REQUIRE(r > g);
+    REQUIRE(g > b);
+}
+
+TEST_CASE("compose_slots_to_image: nothing to compose gives an empty image",
+          "[color_composer]") {
+    ColorComposer c;
+    std::unordered_map<std::string, std::vector<float>> none;
+    REQUIRE(compose_slots_to_image(4, 3, none, c).empty());
+}
+
+TEST_CASE("slots_have_colour: a lone L is not colour", "[color_composer]") {
+    // An L-only mono stack has nothing to compose a hue from. Composing it
+    // anyway yields a grey RGB triplet, which would silently widen every mono
+    // stretch from one channel to three -- 3x the memory to say the same
+    // thing, and not what a mono imager asked for.
+    std::unordered_map<std::string, std::vector<float>> only_L{ {"L", {0.03f}} };
+    REQUIRE(slots_have_colour(only_L) == false);
+}
+
+TEST_CASE("slots_have_colour: broadband and emission slots are colour",
+          "[color_composer]") {
+    REQUIRE(slots_have_colour({ {"L",{0.f}}, {"R",{0.f}}, {"G",{0.f}}, {"B",{0.f}} }) == true);
+    REQUIRE(slots_have_colour({ {"Ha",{0.f}}, {"OIII",{0.f}} }) == true);
+    REQUIRE(slots_have_colour({}) == false);
 }

@@ -8,6 +8,7 @@
 
 #include "NukeXProgress.h"
 #include "NukeXConsoleText.hpp"
+#include "nukex/compose/compose_image.hpp"
 #include "RatingDialog.h"
 #include "FilterDialog.h"
 #include "nukex/io/filter_alias.hpp"
@@ -739,6 +740,19 @@ bool NukeXInstance::ExecuteGlobal()
       progress.message( "Stacked image opened." );
    }
 
+   // The colour-science image: composed once here, shown as NukeX_composed
+   // and then STRETCHED below as NukeX_stretched.
+   //
+   // Until v5.0.3.2 the stretch ran on result.stacked -- the raw per-channel
+   // accumulation -- which never passes through ColorComposer. That is not a
+   // subtle difference. On a 156-frame OSC stack of M63 the raw channels
+   // measured R 1.000 G 1.000 B 0.955, saturation 0.080; the same target
+   // integrated in PixInsight measures 1.000 / 0.736 / 0.660 at 0.337. The
+   // stretched image -- which is the whole point of the program, an STF that
+   // knows more than STF does -- was the one output that never saw the
+   // colour science.
+   nukex::Image composed_image;
+
    // ── ColorComposer-driven 3-channel sRGB output (Task 12) ─────
    //
    // Compose a 3-channel sRGB ImageWindow from the Phase B derived semantic
@@ -755,16 +769,12 @@ bool NukeXInstance::ExecuteGlobal()
 
       nukex::ColorComposer composer;
 
-      // Pre-resolve slot data pointers — looking up by name once per pixel
-      // would re-hash the unordered_map 7 times × 24M pixels at typical sizes.
+      // Pre-resolve the emission slot pointers the chroma gate samples.
+      // compose_slots_to_image resolves the full set once for itself.
       auto slot_ptr = [&]( const std::string& name ) -> const float* {
          auto it = result.derived.slots.find( name );
          return it == result.derived.slots.end() ? nullptr : it->second.data();
       };
-      const float* L_p    = slot_ptr( "L"    );
-      const float* R_p    = slot_ptr( "R"    );
-      const float* G_p    = slot_ptr( "G"    );
-      const float* B_p    = slot_ptr( "B"    );
       const float* Ha_p   = slot_ptr( "Ha"   );
       const float* OIII_p = slot_ptr( "OIII" );
       const float* SII_p  = slot_ptr( "SII"  );
@@ -824,27 +834,17 @@ bool NukeXInstance::ExecuteGlobal()
       View cv = cw.MainView();
       ImageVariant cvi = cv.Image();
 
-      if ( cvi.IsFloatSample() && cvi.BitsPerSample() == 32 )
+      // Compose ONCE. The same pixels are shown here and stretched below;
+      // composing twice would double a Lab/LCH solve over every pixel.
+      composed_image = nukex::compose_slots_to_image(
+          w, h, result.derived.slots, composer );
+
+      if ( cvi.IsFloatSample() && cvi.BitsPerSample() == 32 && !composed_image.empty() )
       {
          pcl::Image& ci = static_cast<pcl::Image&>( *cvi );
-         float* dst_r = ci.PixelData( 0 );
-         float* dst_g = ci.PixelData( 1 );
-         float* dst_b = ci.PixelData( 2 );
-         for ( int p = 0; p < N; ++p )
-         {
-            nukex::DerivedSlots ds;
-            if ( L_p    ) ds.L    = static_cast<double>( L_p[p]    );
-            if ( R_p    ) ds.R    = static_cast<double>( R_p[p]    );
-            if ( G_p    ) ds.G    = static_cast<double>( G_p[p]    );
-            if ( B_p    ) ds.B    = static_cast<double>( B_p[p]    );
-            if ( Ha_p   ) ds.Ha   = static_cast<double>( Ha_p[p]   );
-            if ( OIII_p ) ds.OIII = static_cast<double>( OIII_p[p] );
-            if ( SII_p  ) ds.SII  = static_cast<double>( SII_p[p]  );
-            nukex::sRGBPixel out = composer.compose_pixel( ds );
-            dst_r[p] = static_cast<float>( out.r );
-            dst_g[p] = static_cast<float>( out.g );
-            dst_b[p] = static_cast<float>( out.b );
-         }
+         for ( int ch = 0; ch < 3; ++ch )
+            ::memcpy( ci.PixelData( ch ), composed_image.channel_data( ch ),
+                      static_cast<std::size_t>( N ) * sizeof( float ) );
       }
 
       // Provenance keywords: include gamut-clip diagnostic so users can
@@ -885,6 +885,20 @@ bool NukeXInstance::ExecuteGlobal()
    // factory defaults — preserving bit-identical output vs v4.0.0.8.
    if ( !result.stacked.empty() && !light_paths.empty() )
    {
+      // Stretch the colour-composed image when there is one. A mono batch has
+      // no colour slots to compose, so it keeps its single channel rather than
+      // being widened to a grey RGB triplet.
+      //
+      // This also ends a second defect. result.stacked carries one plane per
+      // CUBE slot -- four for a broadband OSC stack, R G B and a synthesized
+      // rec709 L -- and ImageWindow with color=true turns every plane past the
+      // third into an ALPHA channel. NukeX was shipping that synthesized
+      // luminance as transparency, unstretched, on every OSC and LRGB run.
+      const bool have_colour =
+          nukex::slots_have_colour( result.derived.slots ) && !composed_image.empty();
+      const nukex::Image& stretch_source =
+          have_colour ? composed_image : result.stacked;
+
       nukex::FrameMetadata meta = nukex::FITSReader::read_headers( light_paths.front() );
 
       // Resolve Phase 8 file paths. user_data_root is where per-user rating
@@ -899,7 +913,7 @@ bool NukeXInstance::ExecuteGlobal()
 
       nukex::LayerLoader layer_loader( paths.bootstrap_model_json,
                                        paths.user_model_json );
-      nukex::ImageStats  stats = nukex::compute_image_stats( result.stacked );
+      nukex::ImageStats  stats = nukex::compute_image_stats( stretch_source );
       nukex::Phase8Context p8{ &layer_loader, &stats };
 
       std::string auto_log;
@@ -929,7 +943,7 @@ bool NukeXInstance::ExecuteGlobal()
       {
          if ( auto* vl = dynamic_cast<nukex::VeraLuxStretch*>( primary_op.get() ) )
          {
-            const float solved = vl->auto_tune( result.stacked );
+            const float solved = vl->auto_tune( stretch_source );
             progress.message( pcl::String().Format(
                "Stretch solved for this image: shadow point = %.4f, "
                "log_D = %.2f (background target 0.25).",
@@ -976,7 +990,7 @@ bool NukeXInstance::ExecuteGlobal()
       // Deep copy — stretch is in-place; must not mutate result.stacked.
       // Safe: nukex::Image stores pixels in std::vector<float>, so operator=
       // performs a full element-wise deep copy (no shared buffer).
-      nukex::Image stretched = result.stacked;
+      nukex::Image stretched = stretch_source;
 
       nukex::StretchPipeline pipeline;
       if ( primary_op )
