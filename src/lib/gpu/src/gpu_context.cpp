@@ -260,10 +260,25 @@ int GPUContext::estimate_batch_size(int n_frames, int n_channels) const {
     std::size_t host_budget = host_budget_;
     if (host_budget == 0) {
         const std::size_t avail = host_available_bytes();
-        // Half of what is available. The cube is already resident and
-        // counted out of MemAvailable; the remaining half is headroom for
-        // the fitting loop's per-thread scratch and for the OS.
-        if (avail > 0) host_budget = avail / 2;
+        // Half of what is available, but never more than the ceiling.
+        //
+        // The fraction alone is not safe. MemAvailable counts reclaimable page
+        // cache, and the frame cache fills page cache by design, so it
+        // overstates what an anonymous allocation can actually get. Measured
+        // on a 30 GB box during a 156-frame run: this returned a 13.2 GB
+        // staging batch, PixInsight reached 13.5 GB RSS beside a 4.67 GB cube,
+        // the machine went 3.9 GB into swap, and Phase A's per-frame cost
+        // degraded from 3.85 s to 13.4 s. Roughly half of an 18-minute phase
+        // was spent swapping.
+        //
+        // Batch size is a staging choice, not a numerical one -- proven
+        // bit-exact across batch splits in test_gpu_cpu_fallback -- so a
+        // smaller batch buys more kernel launches and costs nothing else. At
+        // 2 GiB a 156-frame, 4-channel run still stages ~400k voxels at a
+        // time, which is ~21 batches for a 24 MP frame.
+        constexpr std::size_t kMaxHostStagingBytes = 2ull * 1024 * 1024 * 1024;
+        if (avail > 0) host_budget = std::min(avail / 2, kMaxHostStagingBytes);
+        else           host_budget = kMaxHostStagingBytes;
     }
     if (host_budget > 0 && host_budget < available) available = host_budget;
 

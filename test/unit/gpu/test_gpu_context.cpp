@@ -90,3 +90,29 @@ TEST_CASE("GPUContext: a zero budget restores the measured default",
     REQUIRE(ctx.host_memory_budget() == 0);
     REQUIRE(measured > capped);
 }
+
+TEST_CASE("GPUContext: the measured default is bounded, not just proportional",
+          "[gpu][context]") {
+    // Taking a FRACTION of MemAvailable scales with the machine, which sounds
+    // prudent and is not. MemAvailable counts reclaimable page cache, and the
+    // frame cache fills page cache by design, so it overstates what an
+    // anonymous allocation can actually get. Measured on a 30 GB box during a
+    // 156-frame run: PixInsight reached 13.5 GB RSS beside a 4.67 GB cube, the
+    // machine went 3.9 GB into swap, and Phase A's per-frame cost degraded
+    // from 3.85 s to 13.4 s -- roughly half the phase lost to thrash.
+    //
+    // Batch size is a staging choice, not a numerical one -- proven bit-exact
+    // across batch splits in test_gpu_cpu_fallback -- so a smaller batch buys
+    // more kernel launches and costs nothing else. Bound it.
+    GPUContext ctx = GPUContext::create({});
+
+    ctx.set_host_memory_budget(0);                          // measured default
+    const int measured = ctx.estimate_batch_size(156, 4);
+
+    ctx.set_host_memory_budget(2ull * 1024 * 1024 * 1024);  // the ceiling
+    const int at_ceiling = ctx.estimate_batch_size(156, 4);
+
+    INFO("measured=" << measured << " at_ceiling=" << at_ceiling);
+    REQUIRE(measured >= 1);
+    REQUIRE(measured <= at_ceiling);
+}

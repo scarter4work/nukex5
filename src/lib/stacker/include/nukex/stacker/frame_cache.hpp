@@ -83,6 +83,18 @@ public:
     int n_channels() const { return n_channels_; }
     int max_frames() const { return max_frames_; }
 
+    /// Schedule writeback of everything written so far.
+    ///
+    /// Call at the end of Phase A. Not needed for correctness -- an mmap is
+    /// coherent within the process, so Phase B sees every write regardless --
+    /// only to bound how many dirty pages the machine is holding.
+    void flush();
+
+    /// How many times writeback has been scheduled. Diagnostic: with a
+    /// pixel-major layout each frame dirties the whole mapping, so this
+    /// number multiplied by the cache size is roughly the volume written.
+    int sync_count() const { return sync_count_; }
+
     /// Encode float to uint16.
     static uint16_t encode(float value);
 
@@ -104,6 +116,9 @@ private:
     int height_ = 0;
     int n_channels_ = 0;
     int max_frames_ = 0;
+    int sync_count_ = 0;
+    /// Frames between scheduled writebacks. See flush() and write_frame().
+    static constexpr int kSyncEveryNFrames = 8;
     std::atomic<int> n_frames_written_{0};
     std::vector<int> frame_map_;   ///< local slot -> batch-global frame index
 

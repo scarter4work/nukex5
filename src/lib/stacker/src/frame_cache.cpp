@@ -148,21 +148,39 @@ int FrameCache::write_frame(const Image& aligned, int global_index,
         }
     }
 
-    // Ask the kernel to write these pages back now. A frame's writes are
-    // scattered across the whole mapping (the layout is pixel-major, so one
-    // frame touches every pixel's row), and without this the dirty pages
-    // simply accumulate: a 33-frame 24 MP OSC cache is 5.2 GB of dirty page
-    // cache held alongside a 14.8 GB voxel cube. On a 30 GB machine that is
-    // what pushes Phase A into swap, and on 2026-09-05 it was enough to get
-    // PixInsight OOM-killed mid-cache. MS_ASYNC only schedules the writeback,
-    // so this does not stall the caching loop.
-    msync(mapped_, mapped_size_, MS_ASYNC);
+    // Schedule writeback periodically -- NOT after every frame.
+    //
+    // Dirty pages must still be bounded: a 33-frame 24 MP OSC cache is 5.2 GB
+    // of dirty page cache held alongside a 14.8 GB voxel cube, and on
+    // 2026-09-05 that was enough to get PixInsight OOM-killed mid-cache.
+    //
+    // But doing it every frame is enormously wasteful, because the layout is
+    // pixel-major: one frame's writes are strided across the whole mapping and
+    // touch EVERY page of it, so a per-frame msync pushes the entire cache
+    // file back to disk for the 66 MB that frame actually contains. Measured
+    // on a 156-frame 24 MP run: 1704 MB written per cached frame, 20.4 GB in
+    // 45 seconds, 26x write amplification -- and it is why Phase A's per-frame
+    // cost climbed from 3.85 s to 13.4 s as the cache filled.
+    //
+    // Every 8 frames keeps the dirty-page bound that mattered while cutting
+    // the forced writeback by the same factor. MS_ASYNC only schedules it, so
+    // this never stalls the caching loop.
+    if ((frame_index + 1) % kSyncEveryNFrames == 0) {
+        msync(mapped_, mapped_size_, MS_ASYNC);
+        ++sync_count_;
+    }
 
     frame_map_.push_back(global_index);
     // Published after the pixels are in place: Phase B reads
     // n_frames_written_ to decide how many slots are real.
     n_frames_written_.store(frame_index + 1, std::memory_order_release);
     return frame_index;
+}
+
+void FrameCache::flush() {
+    if (!mapped_) return;
+    msync(mapped_, mapped_size_, MS_ASYNC);
+    ++sync_count_;
 }
 
 int FrameCache::read_pixel(int x, int y, int ch, float* out_values) const {

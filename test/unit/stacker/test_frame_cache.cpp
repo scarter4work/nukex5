@@ -173,3 +173,39 @@ TEST_CASE("FrameCache: coverage survives the round trip", "[frame_cache]") {
     REQUIRE(cache.read_pixel(1, 0, 0, vals, ok) == 2);
     REQUIRE(ok[0] == 1);
 }
+
+TEST_CASE("FrameCache: writeback is batched, not once per frame", "[cache]") {
+    // The layout is pixel-major, so ONE frame's writes are strided across the
+    // whole mapping and touch every page of it. msync()ing the whole mapping
+    // after every frame therefore forces the entire cache file back to disk
+    // per frame, not the 66 MB the frame actually contains.
+    //
+    // Measured on a 156-frame 24 MP run: 1704 MB written to the NVMe per
+    // cached frame, 20.4 GB in 45 seconds -- 26x write amplification, and it
+    // is what took Phase A's per-frame cost from 3.85 s to 13.4 s as the
+    // cache filled.
+    Image frame(8, 8, 1);
+    FrameCache cache(8, 8, 1, 64, "/tmp");
+    for (int f = 0; f < 32; ++f) {
+        for (int y = 0; y < 8; ++y)
+            for (int x = 0; x < 8; ++x)
+                frame.at(x, y, 0) = static_cast<float>((f + x + y) % 16) / 16.0f;
+        cache.write_frame(frame, f);
+    }
+    INFO("syncs after 32 frames: " << cache.sync_count());
+    REQUIRE(cache.sync_count() < 32);
+
+    // Every frame still reads back exactly. mmap is coherent within the
+    // process, so deferring writeback cannot change what Phase B sees.
+    float values[64];
+    const int n = cache.read_pixel(3, 5, 0, values);
+    REQUIRE(n == 32);
+    for (int f = 0; f < 32; ++f)
+        REQUIRE(values[f] ==
+                Catch::Approx(static_cast<float>((f + 3 + 5) % 16) / 16.0f).margin(1e-4));
+
+    // An explicit flush is still available for the end of Phase A.
+    const int before = cache.sync_count();
+    cache.flush();
+    REQUIRE(cache.sync_count() == before + 1);
+}

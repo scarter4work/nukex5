@@ -888,6 +888,12 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         }
     }
 
+    // Phase A is done writing. Schedule the last writeback now, so the
+    // dirty pages are not still queued behind Phase B's allocations.
+    // write_frame() only syncs every 8th frame -- see the note there on the
+    // 26x write amplification a per-frame sync costs.
+    for (auto& [sig, cache] : caches) cache.flush();
+
     obs.end_phase();
 
     if (result.n_frames_processed == 0) return result;
