@@ -545,6 +545,59 @@ static float signal_saturation(const Image& img) {
     return count ? static_cast<float>(total / count) : 0.0f;
 }
 
+TEST_CASE("VeraLux: clipping at the shadow point is neutral, not coloured",
+          "[stretch][veralux]") {
+    // Per-channel stretching clips each channel independently at the shadow
+    // point (hms_curve returns 0 for x <= SP). Solving ONE shadow point from
+    // the LUMINANCE and applying it to every channel is wrong: luminance is a
+    // weighted average, so its noise is lower than any single channel's, and
+    // G carries weight 0.7152 so L tracks G while R and B diverge from it.
+    //
+    // Measured on the user's 114-frame M63 with a luminance-derived SP:
+    // R crushed 1.53% of pixels, B 1.79%, G only 0.074% -- and a pixel with R
+    // and B at zero but G alive is SATURATED GREEN. 85,229 of them, 1.14% of
+    // the frame, single pixels scattered everywhere.
+    //
+    // Each channel needs its own shadow point, which is what an unlinked STF
+    // does. Then a genuinely dark pixel clips in all three at once and goes
+    // neutral black, instead of turning into green confetti.
+    const float sky = 0.0278f;
+    const float sigma_ch[3] = { 0.00090f, 0.00060f, 0.00095f };  // R,B noisier than G
+    Image img(256, 256, 3);
+    for (int ch = 0; ch < 3; ++ch)
+        for (int i = 0; i < 256 * 256; ++i)
+            img.channel_data(ch)[i] =
+                sky + sigma_ch[ch] * test_gauss(static_cast<std::uint64_t>(ch * 31337 + i));
+
+    VeraLuxStretch v;
+    v.auto_tune(img, 0.25f);
+    v.apply(img);
+
+    // A clipped channel does not land on exactly zero: the convergence blend
+    // leaves it at L_stretched * k, which is ~0.002 against a 0.25 background.
+    // In 8-bit that is (0, 62, 0) -- fully saturated green. Testing for == 0
+    // misses the entire defect, which is how the first draft of this test
+    // passed against the broken code.
+    const float CRUSHED = 0.02f;
+    const int n = 256 * 256;
+    std::size_t coloured = 0, neutral_black = 0;
+    for (int i = 0; i < n; ++i) {
+        const int zeros = (img.channel_data(0)[i] < CRUSHED)
+                        + (img.channel_data(1)[i] < CRUSHED)
+                        + (img.channel_data(2)[i] < CRUSHED);
+        if (zeros == 3) ++neutral_black;
+        else if (zeros > 0) ++coloured;
+    }
+    const double coloured_frac = static_cast<double>(coloured) / n;
+    INFO("coloured clip " << (100.0 * coloured_frac) << "%, neutral black "
+         << neutral_black << ", SP=" << v.SP);
+
+    // A pixel may be clipped -- that is what a shadow point is for -- but it
+    // must not be clipped in SOME channels only. That is a colour artefact,
+    // not a black point.
+    REQUIRE(coloured_frac < 0.002);
+}
+
 TEST_CASE("VeraLux: a coloured signal on a neutral sky keeps its colour",
           "[stretch][veralux]") {
     // The bug this pins: apply() took each pixel's chromaticity as the ratio

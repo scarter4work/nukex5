@@ -3,6 +3,7 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <limits>
 
 namespace nukex {
 
@@ -31,6 +32,21 @@ inline float hms_den(float D, float b, float SP) {
 /// all above 50. The contrast it costs is nothing: SP moves 0.026725 ->
 /// 0.026607 out of a range approaching 1.
 constexpr double kMaxShadowClip = 0.005;
+
+/// The largest fraction of any ONE COLOUR CHANNEL the shadow point may crush.
+///
+/// Far tighter than kMaxShadowClip, and it has to be. apply() runs the curve
+/// on each channel separately, and hms_curve returns 0 below SP, so a pixel
+/// crushed in R and B but not G is not "dark" -- it is SATURATED GREEN. Noise
+/// is independent per channel, so any hard threshold produces some of it; the
+/// only defence is to put the threshold where essentially nothing crosses it.
+///
+/// Measured on the user's 114-frame M63 with a shadow point taken from the
+/// LUMINANCE: because luminance is a weighted average its noise is lower than
+/// any single channel's, and G carries weight 0.7152 so L tracks G while R and
+/// B diverge. R was crushed on 1.53% of pixels, B on 1.79%, G on only 0.074%
+/// -- 85,229 pixels reading exactly (0, 62, 0) in 8-bit, scattered frame-wide.
+constexpr double kMaxChannelClip = 1.0e-4;
 
 } // namespace
 
@@ -75,6 +91,8 @@ float VeraLuxStretch::auto_tune(const Image& img, float target_background) {
     // hms(L) alone would put the background wherever Jensen's inequality
     // happened to leave it. Tune what apply() actually produces.
     float bg_ch[3] = {0.0f, 0.0f, 0.0f};
+    // The lowest shadow point any channel can tolerate. See kMaxChannelClip.
+    float channel_floor = std::numeric_limits<float>::max();
     if (colour) {
         const float* ch[3] = {c0, c1, c2};
         std::vector<float> cs;
@@ -85,6 +103,21 @@ float VeraLuxStretch::auto_tune(const Image& img, float target_background) {
             const std::size_t m = cs.size() / 2;
             std::nth_element(cs.begin(), cs.begin() + m, cs.end());
             bg_ch[k] = cs[m];
+
+            // This channel's own tail: the level below which at most
+            // kMaxChannelClip of it sits.
+            const std::size_t q = static_cast<std::size_t>(
+                kMaxChannelClip * static_cast<double>(cs.size() - 1));
+            std::nth_element(cs.begin(), cs.begin() + q, cs.begin() + m);
+            channel_floor = std::min(channel_floor, cs[q]);
+
+            // And its own noise, so the STF convention is judged per channel
+            // rather than against the quieter luminance.
+            for (float& v : cs) v = std::abs(v - bg_ch[k]);
+            std::nth_element(cs.begin(), cs.begin() + m, cs.end());
+            const float sig_k = 1.4826f * cs[m];
+            if (sig_k > 0.0f)
+                channel_floor = std::min(channel_floor, bg_ch[k] - 2.8f * sig_k);
         }
     }
 
@@ -133,6 +166,8 @@ float VeraLuxStretch::auto_tune(const Image& img, float target_background) {
     SP = (sigma > 0.0f)
              ? std::max(0.0f, std::min(bg - 2.8f * sigma, clip_bound))
              : 0.0f;
+    // Never above what the noisiest colour channel can survive.
+    if (colour && channel_floor < SP) SP = std::max(0.0f, channel_floor);
 
     // The luminance apply() will actually emit for the background, given the
     // current SP and log_D. Mono is the plain curve; colour mirrors the
