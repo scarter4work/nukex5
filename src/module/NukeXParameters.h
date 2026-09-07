@@ -87,6 +87,26 @@ public:
    enum { None, NumberOfItems };
 };
 
+// ── Background Target ────────────────────────────────────────────
+
+/// Where the auto-stretch puts the sky.
+///
+/// 0.25 is the screen-autostretch convention and stays the default, so an
+/// existing icon reproduces exactly. It is not a law, though: it is also what
+/// lifts the noise floor into plain view, and someone who dislikes visible sky
+/// grain wants it lower. Dropping to 0.15 darkens the sky without touching a
+/// pixel of detail.
+class NXBackgroundTarget : public MetaFloat
+{
+public:
+   NXBackgroundTarget( MetaProcess* );
+   IsoString Id() const override;
+   int       Precision() const override;
+   double    DefaultValue() const override;
+   double    MinimumValue() const override;
+   double    MaximumValue() const override;
+};
+
 // ── GPU Configuration ────────────────────────────────────────────
 
 class NXEnableGPU : public MetaBoolean
@@ -172,6 +192,7 @@ extern NXFlatFramePath*    TheNXFlatFramePathParameter;
 extern NXFlatFrameEnabled* TheNXFlatFrameEnabledParameter;
 extern NXPrimaryStretch*   TheNXPrimaryStretchParameter;
 extern NXFinishingStretch* TheNXFinishingStretchParameter;
+extern NXBackgroundTarget* TheNXBackgroundTargetParameter;
 extern NXEnableGPU*        TheNXEnableGPUParameter;
 extern NXCacheDirectory*   TheNXCacheDirectoryParameter;
 extern NXQEOverridePath*   TheNXQEOverridePathParameter;

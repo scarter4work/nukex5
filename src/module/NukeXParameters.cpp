@@ -120,6 +120,19 @@ size_type NXFinishingStretch::DefaultValueIndex() const { return None; }
 
 // ── GPU Configuration ────────────────────────────────────────────
 
+NXBackgroundTarget* TheNXBackgroundTargetParameter = nullptr;
+
+NXBackgroundTarget::NXBackgroundTarget( MetaProcess* p ) : MetaFloat( p )
+{
+   TheNXBackgroundTargetParameter = this;
+}
+
+IsoString NXBackgroundTarget::Id() const { return "backgroundTarget"; }
+int       NXBackgroundTarget::Precision() const { return 3; }
+double    NXBackgroundTarget::DefaultValue() const { return 0.25; }
+double    NXBackgroundTarget::MinimumValue() const { return 0.05; }
+double    NXBackgroundTarget::MaximumValue() const { return 0.50; }
+
 NXEnableGPU::NXEnableGPU( MetaProcess* p ) : MetaBoolean( p )
 {
    TheNXEnableGPUParameter = this;

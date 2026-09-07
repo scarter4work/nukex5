@@ -14,6 +14,7 @@
 #include <pcl/CheckBox.h>
 #include <pcl/ComboBox.h>
 #include <pcl/Edit.h>
+#include <pcl/NumericControl.h>
 
 #include "NukeXInstance.h"
 
@@ -86,6 +87,8 @@ private:
       HorizontalSizer FinishingStretch_Sizer;
       Label          FinishingStretch_Label;
       ComboBox       FinishingStretch_ComboBox;
+      NumericControl BackgroundTarget_NumericControl;
+
       HorizontalSizer GPU_Sizer;
       CheckBox       EnableGPU_CheckBox;
 
@@ -130,6 +133,7 @@ private:
    void e_FlatClear( Button& sender, bool checked );
    void e_ItemSelected( ComboBox& sender, int itemIndex );
    void e_OptionToggled( Button& sender, bool checked );
+   void e_ValueUpdated( NumericEdit& sender, double value );
 
    // QE override file picker.
    void e_QEOverrideBrowse( Button& sender, bool checked );

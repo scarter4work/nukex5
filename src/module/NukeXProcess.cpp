@@ -33,6 +33,7 @@ NukeXProcess::NukeXProcess()
    new NXFinishingStretch( this );
 
    // GPU
+   new NXBackgroundTarget( this );
    new NXEnableGPU( this );
 
    // Cache

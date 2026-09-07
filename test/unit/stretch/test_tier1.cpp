@@ -423,6 +423,35 @@ static float percentile_of(const Image& img, double q) {
     return *k;
 }
 
+TEST_CASE("VeraLux: auto_tune honours the whole range of background targets",
+          "[stretch][veralux]") {
+    // The background target is a user control (range 0.05-0.50), not a fixed
+    // 0.25. A darker target is the lever for someone who dislikes visible sky
+    // grain: it lowers the noise floor into the shadows instead of lifting it
+    // into plain view. This pins the contract that control depends on across
+    // the range, not just at the default.
+    for (float target : {0.05f, 0.10f, 0.25f, 0.40f, 0.50f}) {
+        for (float bg : {0.0166f, 0.0264f, 0.1479f}) {
+            Image img(128, 128, 1);
+            float* d = img.channel_data(0);
+            for (int i = 0; i < 128 * 128; ++i)
+                d[i] = bg + 0.02f * bg * test_gauss(static_cast<std::uint64_t>(i));
+            for (int i = 0; i < 128; ++i) d[i] = bg * 4.0f;
+
+            VeraLuxStretch v;
+            v.auto_tune(img, target);
+            v.apply(img);
+
+            std::vector<float> lum(d, d + 128 * 128);
+            const std::size_t mid = lum.size() / 2;
+            std::nth_element(lum.begin(), lum.begin() + mid, lum.end());
+            INFO("target=" << target << " bg=" << bg << " -> p50=" << lum[mid]
+                 << " SP=" << v.SP << " log_D=" << v.log_D);
+            REQUIRE(lum[mid] == Catch::Approx(target).margin(0.03f));
+        }
+    }
+}
+
 TEST_CASE("VeraLux: auto_tune solves a shadow point, so a narrow signal band "
           "on a pedestal comes out with contrast", "[stretch][veralux]") {
     // Measured on the user's stack: the linear data is good -- p99.9 sits 44

@@ -38,11 +38,14 @@ MODULE_SRC="${BUILD_DIR}/src/module/NukeX-pxm.so"
 MODULE_DST="${PI_BIN}/NukeX-pxm.so"
 SIGN_DST="${PI_BIN}/NukeX-pxm.xsgn"
 
+# The user may have a RELEASE installed from GitHub -- that is the whole point
+# of the rule, and it is theirs. Never destroy it: stash it and put it back.
+STASH=""
 if [ -e "${MODULE_DST}" ] || [ -e "${SIGN_DST}" ]; then
-    echo "ERROR: a module is already installed at ${MODULE_DST}."
-    echo "Nothing should live there between runs -- remove it and re-run,"
-    echo "or say why it is there. Refusing to overwrite it silently."
-    exit 1
+    STASH="$(mktemp -d)"
+    echo "NukeX E2E: an installed module is present; stashing it to ${STASH}"
+    [ -e "${MODULE_DST}" ] && mv "${MODULE_DST}" "${STASH}/"
+    [ -e "${SIGN_DST}" ]   && mv "${SIGN_DST}"   "${STASH}/"
 fi
 if [ ! -f "${MODULE_SRC}" ]; then
     echo "ERROR: ${MODULE_SRC} not found. Build the module first."
@@ -62,7 +65,15 @@ fi
 
 uninstall_module() {
     rm -f "${MODULE_DST}" "${SIGN_DST}"
-    echo "NukeX E2E: module removed from ${PI_BIN} (nothing is left installed)."
+    if [ -n "${STASH}" ]; then
+        # Put the user's own installation back exactly as it was.
+        [ -e "${STASH}/NukeX-pxm.so" ]   && mv "${STASH}/NukeX-pxm.so"   "${MODULE_DST}"
+        [ -e "${STASH}/NukeX-pxm.xsgn" ] && mv "${STASH}/NukeX-pxm.xsgn" "${SIGN_DST}"
+        rmdir "${STASH}" 2>/dev/null || true
+        echo "NukeX E2E: borrowed module removed; the installed one is restored."
+    else
+        echo "NukeX E2E: module removed from ${PI_BIN} (nothing is left installed)."
+    fi
 }
 trap uninstall_module EXIT
 

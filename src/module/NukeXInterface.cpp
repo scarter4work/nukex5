@@ -253,6 +253,26 @@ NukeXInterface::GUIData::GUIData( NukeXInterface& w )
    FinishingStretch_Sizer.Add( FinishingStretch_Label );
    FinishingStretch_Sizer.Add( FinishingStretch_ComboBox, 100 );
 
+   BackgroundTarget_NumericControl.label.SetText( "Background level:" );
+   BackgroundTarget_NumericControl.slider.SetRange( 0, 90 );
+   BackgroundTarget_NumericControl.SetReal();
+   BackgroundTarget_NumericControl.SetRange(
+      TheNXBackgroundTargetParameter->MinimumValue(),
+      TheNXBackgroundTargetParameter->MaximumValue() );
+   BackgroundTarget_NumericControl.SetPrecision(
+      TheNXBackgroundTargetParameter->Precision() );
+   BackgroundTarget_NumericControl.SetToolTip(
+      "Where the auto-stretch puts the sky, from 0.05 (dark) to 0.50 (bright).\n\n"
+      "0.25 is the screen-autostretch convention and the default. It is also "
+      "what lifts the noise floor into plain view: lower the target and the "
+      "sky darkens without losing a pixel of detail, so faint grain stops "
+      "competing with the subject. Raise it to judge the faintest structure.\n\n"
+      "Affects the stretched image only. The stacked and composed images are "
+      "linear and are not touched." );
+   BackgroundTarget_NumericControl.edit.SetFixedWidth( 80 );
+   BackgroundTarget_NumericControl.OnValueUpdated(
+      (NumericEdit::value_event_handler)&NukeXInterface::e_ValueUpdated, w );
+
    EnableGPU_CheckBox.SetText( "Enable GPU acceleration (OpenCL)" );
    EnableGPU_CheckBox.SetToolTip(
       "Runs Phase B's per-voxel weight classification, robust statistics, "
@@ -261,6 +281,8 @@ NukeXInterface::GUIData::GUIData( NukeXInterface& w )
       "CPU regardless.  Disable to run the whole stack on CPU -- useful "
       "for debugging or on machines without OpenCL.  Default: on." );
    EnableGPU_CheckBox.OnClick( (Button::click_event_handler)&NukeXInterface::e_OptionToggled, w );
+
+   Options_Sizer.Add( BackgroundTarget_NumericControl );
 
    GPU_Sizer.SetSpacing( 16 );
    GPU_Sizer.Add( EnableGPU_CheckBox );
@@ -383,6 +405,7 @@ void NukeXInterface::UpdateControls()
    UpdateFlatFramesList();
    GUI->PrimaryStretch_ComboBox.SetCurrentItem( instance.primaryStretch );
    GUI->FinishingStretch_ComboBox.SetCurrentItem( instance.finishingStretch );
+   GUI->BackgroundTarget_NumericControl.SetValue( instance.backgroundTarget );
    GUI->EnableGPU_CheckBox.SetChecked( instance.enableGPU );
    GUI->QEOverride_Edit.SetText( instance.qeOverridePath );
 
@@ -547,6 +570,12 @@ void NukeXInterface::e_OptionToggled( Button& sender, bool checked )
 {
    if ( sender == GUI->EnableGPU_CheckBox )
       instance.enableGPU = checked;
+}
+
+void NukeXInterface::e_ValueUpdated( NumericEdit& sender, double value )
+{
+   if ( sender == GUI->BackgroundTarget_NumericControl )
+      instance.backgroundTarget = static_cast<float>( value );
 }
 
 // ── QE override file picker handlers ─────────────────────────────

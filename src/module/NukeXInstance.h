@@ -53,6 +53,7 @@ public:
    frame_list  flatFrames;
    pcl_enum    primaryStretch    = 0;  // NXPrimaryStretch::Auto
    pcl_enum    finishingStretch  = 0;  // NXFinishingStretch::None
+   float       backgroundTarget = 0.25f;  // where the auto-stretch puts the sky
    pcl_bool    enableGPU       = true;
    String      cacheDirectory  = "/tmp";
    String      qeOverridePath;  // optional path to qe_overrides.json; empty = none

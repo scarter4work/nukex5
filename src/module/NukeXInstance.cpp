@@ -403,6 +403,7 @@ void NukeXInstance::Assign( const ProcessImplementation& p )
       flatFrames       = x->flatFrames;
       primaryStretch   = x->primaryStretch;
       finishingStretch = x->finishingStretch;
+      backgroundTarget = x->backgroundTarget;
       enableGPU        = x->enableGPU;
       cacheDirectory   = x->cacheDirectory;
       qeOverridePath   = x->qeOverridePath;
@@ -943,11 +944,11 @@ bool NukeXInstance::ExecuteGlobal()
       {
          if ( auto* vl = dynamic_cast<nukex::VeraLuxStretch*>( primary_op.get() ) )
          {
-            const float solved = vl->auto_tune( stretch_source );
+            const float solved = vl->auto_tune( stretch_source, backgroundTarget );
             progress.message( pcl::String().Format(
                "Stretch solved for this image: shadow point = %.4f, "
-               "log_D = %.2f (background target 0.25).",
-               vl->SP, solved ).ToUTF8().c_str() );
+               "log_D = %.2f (background target %.3f).",
+               vl->SP, solved, backgroundTarget ).ToUTF8().c_str() );
          }
       }
 
@@ -1120,6 +1121,7 @@ void* NukeXInstance::LockParameter( const MetaParameter* p, size_type tableRow )
    if ( p == TheNXFlatFrameEnabledParameter )  return &flatFrames[tableRow].enabled;
    if ( p == TheNXPrimaryStretchParameter )    return &primaryStretch;
    if ( p == TheNXFinishingStretchParameter )  return &finishingStretch;
+   if ( p == TheNXBackgroundTargetParameter )  return &backgroundTarget;
    if ( p == TheNXEnableGPUParameter )         return &enableGPU;
    if ( p == TheNXCacheDirectoryParameter )         return cacheDirectory.Begin();
    if ( p == TheNXQEOverridePathParameter )         return qeOverridePath.Begin();
