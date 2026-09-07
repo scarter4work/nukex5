@@ -23,6 +23,15 @@ inline float hms_den(float D, float b, float SP) {
     return std::asinh(D * (1.0f - SP) + b) - std::asinh(b);
 }
 
+/// The largest fraction of a frame the auto-solved shadow point may send to
+/// black. Chosen from two independent measurements: it is above the 0.256% a
+/// NORMAL background loses at -2.8 sigma, so the STF convention still governs
+/// flat data (the break-even is 0.25%), and on the user's 114-frame M63 it
+/// takes the largest clipped clump from 231 pixels to 42 and leaves none at
+/// all above 50. The contrast it costs is nothing: SP moves 0.026725 ->
+/// 0.026607 out of a range approaching 1.
+constexpr double kMaxShadowClip = 0.005;
+
 } // namespace
 
 float VeraLuxStretch::apply_scalar(float x) const {
@@ -75,13 +84,34 @@ float VeraLuxStretch::auto_tune(const Image& img, float target_background) {
     // median - 2.8 sigma is the convention PixInsight's own STF autostretch
     // uses, with sigma from the MAD (x1.4826 for consistency with a normal)
     // so a bright nebula cannot inflate the noise estimate.
+    //
+    // But that convention assumes a FLAT background, and a deep stack has no
+    // such thing. On the user's 114-frame M63 the sigma collapses to 0.000351,
+    // which puts median - 2.8 sigma only 0.4% below the median -- inside the
+    // frame's own vignetting -- and 1.437% of the SKY went to pure black in
+    // clumps up to 231 pixels wide. So bound how much may be clipped: take
+    // whichever of the two candidates is lower. The bound sits above the
+    // 0.256% a normal background loses at -2.8 sigma (its 0.25th percentile is
+    // at exactly 2.807 sigma, the break-even), so on flat data the convention
+    // still governs and only a fat, structured low tail can pull SP down.
+    //
+    // Taken here, while `sample` still holds levels rather than deviations.
+    // [begin, mid) already holds the mid smallest after the median's
+    // nth_element, so the percentile only has to partition that half.
+    const std::size_t k =
+        static_cast<std::size_t>(kMaxShadowClip * static_cast<double>(sample.size() - 1));
+    std::nth_element(sample.begin(), sample.begin() + k, sample.begin() + mid);
+    const float clip_bound = sample[k];
+
     for (float& v : sample) v = std::abs(v - bg);
     std::nth_element(sample.begin(), sample.begin() + mid, sample.end());
     const float sigma = 1.4826f * sample[mid];
 
     const float saved_SP = SP;
     const float saved    = log_D;
-    SP = (sigma > 0.0f) ? std::max(0.0f, bg - 2.8f * sigma) : 0.0f;
+    SP = (sigma > 0.0f)
+             ? std::max(0.0f, std::min(bg - 2.8f * sigma, clip_bound))
+             : 0.0f;
 
     // A band too tight to clip: if no intensity in range can still put the
     // background on target -- which happens when the noise floor is so narrow

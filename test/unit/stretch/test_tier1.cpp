@@ -392,6 +392,29 @@ static Image narrow_band_on_a_pedestal(float bg, float sigma) {
     return img;
 }
 
+/// A mostly-flat background carrying a few shallow depressions -- the shape a
+/// vignette or a sky gradient leaves in a deep stack. Each dip is 4 sigma deep
+/// and tens of pixels wide, so the frame's LOW TAIL is far fatter than a
+/// normal's while the MAD still measures the noise. That combination is what
+/// makes a fixed -2.8 sigma threshold cut THROUGH the sky.
+static Image background_with_a_gradient(float bg, float sigma) {
+    Image img(256, 256, 1);
+    float* d = img.channel_data(0);
+    const struct { float cx, cy; } dip[] = {{60, 70}, {190, 110}, {120, 200}};
+    for (int y = 0; y < 256; ++y)
+        for (int x = 0; x < 256; ++x) {
+            const int i = y * 256 + x;
+            float v = bg + sigma * test_gauss(static_cast<std::uint64_t>(i));
+            for (const auto& p : dip) {
+                const float dx = static_cast<float>(x) - p.cx;
+                const float dy = static_cast<float>(y) - p.cy;
+                v -= 4.0f * sigma * std::exp(-(dx * dx + dy * dy) / (2.0f * 20.0f * 20.0f));
+            }
+            d[i] = v;
+        }
+    return img;
+}
+
 static float percentile_of(const Image& img, double q) {
     std::vector<float> v(img.channel_data(0),
                          img.channel_data(0) + img.width() * img.height());
@@ -453,6 +476,41 @@ TEST_CASE("VeraLux: a background already at the floor gets no shadow point",
     v.auto_tune(img, 0.25f);
     REQUIRE(v.SP >= 0.0f);
     REQUIRE(v.apply_scalar(0.0f) == Catch::Approx(0.0f));
+}
+
+TEST_CASE("VeraLux: the shadow point cannot clip away a background gradient",
+          "[stretch][veralux]") {
+    // STF's median - 2.8 sigma convention assumes a FLAT background: on a
+    // normal one it clips 0.256% of the frame, scattered single pixels. It
+    // does not survive a deep stack. Measured on the user's 114-frame M63,
+    // 114 frames collapse sigma to 0.000351, so median - 2.8 sigma lands only
+    // 0.4% below the median -- INSIDE the frame's own vignetting -- and takes
+    // 1.437% of the sky to pure black in clumps up to 231 pixels. Those are
+    // the "black circles where the stars should be": 0.000% of the brightest
+    // 0.1% of pixels were zeroed and 74.5% of the darkest 2% were.
+    //
+    // So bound what the shadow point may clip. The bound has to sit above the
+    // 0.256% a normal background loses at -2.8 sigma, or it would override the
+    // convention on flat data too -- the 0.25% percentile of a normal sits at
+    // exactly 2.807 sigma, which is that break-even.
+    const float bg = 0.0418f, sigma = 0.0002f;
+    Image img = background_with_a_gradient(bg, sigma);
+
+    VeraLuxStretch v;
+    v.auto_tune(img, 0.25f);
+    v.apply(img);
+
+    const float* d = img.channel_data(0);
+    const std::size_t n = 256 * 256;
+    const std::size_t black = static_cast<std::size_t>(std::count(d, d + n, 0.0f));
+    const double clipped = static_cast<double>(black) / static_cast<double>(n);
+    INFO("SP=" << v.SP << " clipped=" << (100.0 * clipped) << "% (" << black
+               << " of " << n << ")");
+
+    // Bounded, not disabled: falling back to SP = 0 would clip nothing and
+    // cost all the contrast the shadow point was added for.
+    REQUIRE(v.SP > 0.0f);
+    REQUIRE(clipped <= 0.007);
 }
 
 TEST_CASE("VeraLux: auto_tune tunes the luminance it actually stretches, not "
