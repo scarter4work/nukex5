@@ -1,5 +1,55 @@
 # NukeX — Changelog
 
+## v5.0.3.1 — 2026-09-07
+
+### Fixed
+- **Frames taken after a meridian flip are now stacked where they belong.**
+  When the mount swings the camera through the meridian, everything after the
+  flip arrives rotated 180°. NukeX detected that correctly and then undid the
+  very rotation that was putting those frames right, laying them down upside
+  down. Nothing complained: the frames "aligned", the console reported no
+  failures, and the stack looked plausible, because the stacker's own
+  robustness quietly rejected the misplaced half as outliers.
+
+  What it left behind was a hole. On a 114-frame M63 — 74 frames one side of
+  the flip, 40 the other — every bright star came with a companion dark disc
+  at its exact 180° reflection about the frame centre: 64 such regions, each
+  around 130× the surrounding noise and about 3% below the sky, ten to twenty
+  pixels across. They look uncannily like stars that have been eaten. There is
+  nothing there in the data — the raw frames at those positions are blank sky,
+  indistinguishable from any control patch — and it was NukeX that made them.
+
+  They are gone. Every reflection now reads as clean background, the stars
+  themselves went from 130× the median noise to 16–21× (a star is genuinely
+  noisier than sky), and all 40 flipped frames contribute their signal instead
+  of fighting the other 74. Detection stays and is still reported in the
+  console; it just no longer changes anything.
+
+- **The auto-stretch no longer clips holes in the sky.** v5.0.3.0's new shadow
+  point followed the standard convention of clipping 2.8σ below the sky level.
+  That convention assumes the background is flat, and in a deep stack it is
+  not: with 114 frames the noise falls far enough that 2.8σ lands only 0.4%
+  below the sky — inside the frame's own vignetting — and the threshold cuts
+  straight through it. 1.4% of the picture went to pure black in ragged,
+  star-shaped patches up to 233 pixels across.
+
+  The shadow point is now bounded: it may never send more than 0.5% of the
+  frame to black. On a flat background nothing changes, because the ordinary
+  convention clips only 0.26% there — the bound bites only when the sky has
+  structure. On that same stack the largest clipped patch fell from 233 pixels
+  to 5, which is single noise pixels rather than holes, and the cost is 3% of
+  the contrast.
+
+- **L-Quad and similar quad-band filters are treated as broadband again.**
+  Filters like L-Quad Enhance, L-Synergy and other quad-band glass were
+  classified as dual-narrowband, so a galaxy shot through one was decomposed
+  into Hα/OIII/SII emission lines. One line solved at or below zero everywhere
+  and was clamped, which left 7,540 non-zero red pixels out of 7.5 million and
+  a teal picture. It also meant such stacks skipped the new background
+  matching entirely. Their passbands make the case on their own: 175 nm
+  against 3 nm for an L-Ultimate. If you shoot RGB through quad-band glass and
+  narrowband through a dual-band filter, that now works as expected.
+
 ## v5.0.3.0 — 2026-09-06
 
 ### Fixed
