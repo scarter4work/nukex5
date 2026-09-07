@@ -116,30 +116,60 @@ TEST_CASE("FilterClassifier: broadband LPR names on mono resolve to BROADBAND_L 
     }
 }
 
-TEST_CASE("FilterClassifier: L-Quad Enhance resolves to the three-line canonical",
+TEST_CASE("FilterClassifier: quad-band glass is broadband, not narrowband",
           "[filter_classifier]") {
-    // Reported from a real stack, 2026-09-04: 53 Bayer frames with
-    // FILTER='Lqef' stopped the batch at start. The QE data shipped all along,
-    // as Optolong-L-Quad-Enhance, but the classifier had no spelling that
-    // reached it -- the filter covers Ha, OIII and SII, and until now only
-    // two-line sets had canonical names.
+    // v5.0.0.2 put the L-Quad family in the narrowband table so that a batch
+    // of FILTER='Lqef' frames would stack at all instead of stopping at start.
+    // It stacked -- as an emission-line target. On M63, a galaxy, the Q-solve
+    // was asked to decompose pure continuum into Ha, OIII and SII: one line
+    // came out at or below zero across the whole frame and was clamped, so the
+    // red channel of a 114-frame stack held 7,540 non-zero pixels out of
+    // 7,547,618 and the picture came out teal.
+    //
+    // The filter says what light gets through, not what the target emits. A
+    // 175 nm passband is not narrowband by any definition -- compare
+    // L-Ultimate at 3 nm, ALP-T at 5, L-eXtreme at 7 -- and this is light
+    // pollution glass used for RGB imaging. It belongs with the other LPR
+    // filters already in the broadband set (lpro, lpr, lps, lpsd1...).
     FilterClassifier c;
     for (const char* spelling : { "Lqef", "L-QEF", "LQEF", "L-Quad", "L Quad Enhance",
-                                  "Optolong L-Quad Enhance", "HaO3S2", "HaOIIISII" }) {
+                                  "Optolong L-Quad Enhance", "L-Synergy",
+                                  "HaO3S2", "HaOIIISII" }) {
         INFO("FILTER = " << spelling);
         Filter f = c.classify(make_meta(spelling, "RGGB"));
-        REQUIRE(f.cls == FilterClass::DUAL_NB_OSC);
-        REQUIRE(f.name == "HaO3S2");
+        REQUIRE(f.cls  == FilterClass::BROADBAND_OSC);
+        REQUIRE(f.name == "OSC");
+        // Still no warning: the batch stacks, which is what the v5.0.0.2 entry
+        // was added to achieve. Only the interpretation changed.
+        REQUIRE(c.last_warning().empty());
     }
 }
 
-TEST_CASE("FilterClassifier: a three-line filter on mono is still narrowband, not luminance",
+TEST_CASE("FilterClassifier: genuine dual-narrowband glass is untouched",
           "[filter_classifier]") {
-    // The broadband-on-mono fallback must not swallow it: this is a real
-    // multi-line filter, not an unrecognised name to treat as luminance.
+    // The rule is about passband width, and these are 3 to 25 nm. Moving the
+    // quad-band names must not take the real narrowband filters with them.
+    FilterClassifier c;
+    for (auto [spelling, canonical] : std::vector<std::pair<const char*, const char*>>{
+             {"L-eXtreme", "L-eXtreme"}, {"L-Ultimate", "L-Ultimate"},
+             {"L-eNhance", "L-eNhance"}, {"ALP-T", "ALP-T"},
+             {"HaO3", "HaO3"},           {"S2O3", "S2O3"}}) {
+        INFO("FILTER = " << spelling);
+        Filter f = c.classify(make_meta(spelling, "RGGB"));
+        REQUIRE(f.cls  == FilterClass::DUAL_NB_OSC);
+        REQUIRE(f.name == canonical);
+    }
+}
+
+TEST_CASE("FilterClassifier: quad-band glass on a mono sensor is luminance",
+          "[filter_classifier]") {
+    // Same rule, other sensor: a broadband filter on a mono frame is a
+    // luminance channel, and it must not raise the unknown-filter warning.
     FilterClassifier c;
     Filter f = c.classify(make_meta("Lqef"));
-    REQUIRE(f.name == "HaO3S2");
+    REQUIRE(f.cls  == FilterClass::BROADBAND_L);
+    REQUIRE(f.name == "L");
+    REQUIRE(c.last_warning().empty());
 }
 
 TEST_CASE("FilterClassifier: a taught alias resolves a name the table does not know",
@@ -174,11 +204,33 @@ TEST_CASE("FilterClassifier: an alias cannot shadow a shipped name",
 
 TEST_CASE("FilterClassifier: an alias is matched on the normalised name",
           "[filter_classifier]") {
+    // The fixture used to teach "lqef", which is no longer a name the table
+    // does not know -- quad-band glass is classified as the broadband LPR
+    // filter it is, and the shipped table is consulted BEFORE taught aliases.
+    // Any capture-software spelling still works; this one just has to be a
+    // name NukeX genuinely has not heard of, which is what the case is about.
     FilterAliasStore aliases;
-    aliases.set("lqef", "HaO3S2");
+    aliases.set("mydualband", "HaO3");
 
     FilterClassifier c;
     c.set_aliases(aliases);
-    REQUIRE(c.classify(make_meta("L-QEF", "RGGB")).name == "HaO3S2");
-    REQUIRE(c.classify(make_meta("l qef", "RGGB")).name == "HaO3S2");
+    REQUIRE(c.classify(make_meta("My-DualBand", "RGGB")).name == "HaO3");
+    REQUIRE(c.classify(make_meta("my dual band", "RGGB")).name == "HaO3");
+}
+
+TEST_CASE("FilterClassifier: a taught alias cannot pull quad-band glass back "
+          "into the narrowband path", "[filter_classifier]") {
+    // Worth stating rather than discovering: aliases are consulted only when
+    // the shipped table has no answer, so teaching "lqef" a narrowband
+    // canonical does NOT restore the three-line solve. The three-line Q-solve
+    // has no shipped spelling any more. ChannelDecomposer still supports it,
+    // and reaching it again needs a deliberate opt-in, not an alias.
+    FilterAliasStore aliases;
+    aliases.set("lqef", "HaO3");
+
+    FilterClassifier c;
+    c.set_aliases(aliases);
+    Filter f = c.classify(make_meta("Lqef", "RGGB"));
+    REQUIRE(f.cls  == FilterClass::BROADBAND_OSC);
+    REQUIRE(f.name == "OSC");
 }

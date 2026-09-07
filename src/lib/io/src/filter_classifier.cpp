@@ -41,22 +41,6 @@ const std::unordered_map<std::string, KnownFilter>& known_table() {
         {"lultimate", {FilterClass::DUAL_NB_OSC,       "L-Ultimate", 578.5,  3.0}},
         {"alpt",      {FilterClass::DUAL_NB_OSC,       "ALP-T",      578.5,  5.0}},
 
-        // Three-line filters. A quad-band product passes Hb as well, but Hb is
-        // not a Q-solve line -- at 486 nm it lands on the same B/G photosites
-        // as OIII and would make the Q matrix rank-deficient -- so what these
-        // contribute is Ha + OIII + SII. That is exactly determined on an RGB
-        // sensor. Until 2026-09-04 the set had no canonical name, so a real
-        // batch of L-Quad Enhance frames stopped at start with its measured QE
-        // sitting in the database, unreachable.
-        {"hao3s2",    {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
-        {"haoiiisii", {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
-        {"lqef",      {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
-        {"lquad",     {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
-        {"lquadenhance",
-                      {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
-        {"optolonglquadenhance",
-                      {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
-        {"lsynergy",  {FilterClass::DUAL_NB_OSC,       "HaO3S2",     578.5, 175.0}},
     };
     return table;
 }
@@ -69,6 +53,24 @@ const std::unordered_set<std::string>& broadband_any_names() {
     static const std::unordered_set<std::string> names = {
         "l", "lum", "luminance",
         "lpro", "lpr", "lps", "lpsd1", "lpsd2", "lpsd3", "lpsv4",
+
+        // Quad-band light-pollution glass. It passes Ha, OIII and SII, which
+        // is why v5.0.0.2 filed it as narrowband -- but it passes ~175 nm to
+        // do it, against 3 nm for L-Ultimate, 5 for ALP-T and 7 for
+        // L-eXtreme. A 175 nm passband is not narrowband, and the filter says
+        // what light gets through, not what the target emits: asked to
+        // decompose the continuum of a galaxy into three emission lines, the
+        // Q-solve drove one line to zero across a whole 114-frame stack of
+        // M63 and the picture came out teal. This is what people image RGB
+        // with, so it is classified as what it is.
+        //
+        // Note what this costs: the three-line Q-solve now has no shipped
+        // spelling at all, and a taught alias cannot restore one, because
+        // aliases are consulted only when the table has no answer (see
+        // classify()). ChannelDecomposer still supports three lines; reaching
+        // it again needs a deliberate opt-in rather than a filter name.
+        "hao3s2", "haoiiisii", "lqef", "lquad", "lquadenhance",
+        "optolonglquadenhance", "lsynergy",
         "uvir", "uvircut", "uvirblock", "irblock", "uvcut",
         "cls", "clsccd",
         "l1", "l2", "l3",           // Astronomik L1/L2/L3 UV-IR block
