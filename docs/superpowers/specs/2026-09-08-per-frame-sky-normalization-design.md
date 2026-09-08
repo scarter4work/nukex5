@@ -124,3 +124,43 @@ and are separately switchable (`Config::normalize_frames`,
   already-dim frames down further, and widens the star-flux spread from
   0.090-1.119x of the median to 0.056-1.399x.
 
+## Measured
+
+M27 2025, the 24 B frames -- the corpus with the worst within-filter spread
+(4383 to 12962 ADU) and therefore the most to gain. Pixel-scale noise from
+horizontal nearest-neighbour differences over background pixels, which is
+blind to the smooth gradients that would otherwise dominate:
+
+| corpus | arm | pixel noise | vs off |
+|--------|-----|------------:|--------|
+| M27 2025 B, 24f mono | off            | 0.00026157 | -- |
+|                      | offset + scale | 0.00026165 | +0.03%, neutral |
+|                      | offset only    | 0.00024208 | **-7.5%** |
+| NGC7635, 65f mono L  | off            | 0.00099188 | -- |
+|                      | offset + scale | 0.00023512 | **-76.3%** |
+|                      | offset only    | 0.00023288 | **-76.5%** |
+
+Noise goes as 1/sqrt(n), so -7.5% is worth about 17% more frames and -76.5%
+is worth about 18x.
+
+NGC7635 is the corpus previously measured at 5.19x the pixel-scale noise of a
+plain Huber estimator on identical voxels, and 26.9x of effective exposure
+thrown away. Normalisation recovers 4.26x of that by fixing the fit's INPUTS,
+which is direct evidence that the bimodality the GMM was coin-flipping on is
+per-frame level variation rather than anything per-pixel. The model race does
+not have to be abandoned to get most of that back.
+
+The multiplicative half never helps and sometimes hurts.
+
+Before the estimator was fixed, the same corpus measured 0.00028243 with
+offset + scale -- 8% WORSE than doing nothing. That regression is entirely
+attributable to the scale term being taken from MAD about the median.
+
+### How this was measured
+
+`StackingEngine` is a plain C++ library and needs no PixInsight, so the
+instrument is a headless driver that links the static libraries directly and
+runs the same corpus through each arm in one process. Corpora must be run ONE
+AT A TIME: three concurrent stacks exhaust a 30 GB box and the kernel kills
+them.
+

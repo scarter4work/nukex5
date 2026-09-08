@@ -88,14 +88,27 @@ public:
 
         /// Whether normalisation may rescale a frame, or only re-level it.
         ///
-        /// The additive half removes the sky-level differences the per-voxel
-        /// fit was mistaking for per-pixel bimodality, and cannot change a
-        /// frame's signal amplitude. The multiplicative half equalises noise
-        /// scale, which is only meaningful when `scale` is really noise --
-        /// see measure_channel_sky, where getting that wrong once made a real
-        /// stack 8% noisier. Kept switchable so the two halves can be
-        /// measured apart rather than argued about.
-        bool                  normalize_scale  = true;
+        /// OFF by default, on measurement. The additive half removes the
+        /// sky-level differences the per-voxel fit was mistaking for
+        /// per-pixel bimodality and cannot change a frame's signal amplitude.
+        /// The multiplicative half equalises NOISE scale, and on real data it
+        /// has never beaten re-levelling alone:
+        ///
+        ///     M27 2025 B, 24f   off 0.00026157  +scale 0.00026165  offset 0.00024208
+        ///     NGC7635,    65f   off 0.00099188  +scale 0.00023512  offset 0.00023288
+        ///
+        /// The reason is physical. Matching noise scale is a TRANSPARENCY
+        /// correction, and it is only right when a frame's noise rose because
+        /// its signal fell with it. On these sessions the sky rose from added
+        /// skyglow instead -- d log(scale)/d log(sky) measures 0.53, and
+        /// photon noise is 0.5 -- so the signal did not change and scaling it
+        /// down is simply wrong. On the B frames it widened the star-flux
+        /// spread from 0.090-1.119x of the median to 0.056-1.399x.
+        ///
+        /// Kept available rather than deleted: a session whose scale really
+        /// does track transparency (the exponent near 1.0 rather than 0.5)
+        /// is the case this was designed for.
+        bool                  normalize_scale  = false;
     };
 
     explicit StackingEngine(const Config& config);

@@ -1,5 +1,42 @@
 # NukeX — Changelog
 
+## v5.0.4.0 — 2026-09-08
+
+### Added
+- **Per-frame sky normalisation.** Nothing in NukeX corrected for the fact that
+  the sky changes during a session. `EXPTIME` was read, stored and summed for
+  bookkeeping, and never used to scale anything; there was no level
+  normalisation either. Every frame went into the fit on its own level, so a
+  **per-frame** effect was being modelled **per-pixel** — and the mixture model
+  that won about a third of voxels resolved it by flipping a coin between two
+  levels, independently at every pixel.
+
+  Frames are now brought onto a common sky level before they are accumulated,
+  solved per colour channel rather than per batch. Measured on real sessions,
+  stacked pixel-scale noise:
+
+  | corpus | before | after |
+  |--------|-------:|------:|
+  | M27 2025, 24 blue frames | 0.00026157 | 0.00024208 (**−7.5%**) |
+  | NGC7635, 65 luminance frames | 0.00099188 | 0.00023288 (**−76.5%**) |
+
+  Noise falls as the square root of frame count, so −76.5% is worth roughly
+  **eighteen times the exposure** on that second set. It is the session whose
+  stack was previously measured as 5.19× noisier than a plain robust average of
+  the same pixels: the cause was the changing sky all along, and correcting it
+  recovers most of what was being lost.
+
+  A stable session is left exactly alone — bit for bit, proven against the
+  previous release on a real stack — so nothing moves for anyone whose sky
+  held still.
+
+### Fixed
+- **Editing an OpenCL kernel had no effect until CMake was re-run.** Kernels are
+  embedded into a generated header at configure time, and nothing in the build
+  graph knew the `.cl` files existed, so a rebuild kept running the *previous*
+  kernel. This surfaced as the GPU returning impossible values — a physics bug
+  to look at, a build bug in fact.
+
 ## v5.0.3.3 — 2026-09-07
 
 ### Fixed
