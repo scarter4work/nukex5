@@ -734,9 +734,9 @@ and the integration tests under `[.integration]` if they are enabled.
 They are gated out of the default ctest run.
 
 ```bash
-./build/test/test_lrgb_mono "[integration]"
-./build/test/test_phase_a_router "[integration]"
-./build/test/test_phase_b_qsolve "[integration]"
+./build/test/integration/test_lrgb_mono "[integration]"
+./build/test/integration/test_phase_a_router "[integration]"
+./build/test/integration/test_phase_b_qsolve "[integration]"
 ```
 
 Expected: all pass.
@@ -1013,9 +1013,9 @@ that Phase B sees identical data across the layout change.
 
 ```bash
 cd build && ctest --output-on-failure
-cd .. && ./build/test/test_lrgb_mono "[integration]" \
-      && ./build/test/test_phase_a_router "[integration]" \
-      && ./build/test/test_phase_b_qsolve "[integration]"
+cd .. && ./build/test/integration/test_lrgb_mono "[integration]" \
+      && ./build/test/integration/test_phase_a_router "[integration]" \
+      && ./build/test/integration/test_phase_b_qsolve "[integration]"
 ```
 
 Expected: all green.
@@ -1204,9 +1204,9 @@ Expected: **All tests passed**, including `sync_count() == 32`.
 
 ```bash
 cd build && ctest --output-on-failure
-cd .. && ./build/test/test_lrgb_mono "[integration]" \
-      && ./build/test/test_phase_a_router "[integration]" \
-      && ./build/test/test_phase_b_qsolve "[integration]"
+cd .. && ./build/test/integration/test_lrgb_mono "[integration]" \
+      && ./build/test/integration/test_phase_a_router "[integration]" \
+      && ./build/test/integration/test_phase_b_qsolve "[integration]"
 ```
 
 Expected: all green.
