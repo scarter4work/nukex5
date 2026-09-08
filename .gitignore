@@ -45,6 +45,3 @@ Testing/
 # Temporary
 *.tmp
 *.bak
-
-# Out-of-tree CMake spike build
-build-spike/
