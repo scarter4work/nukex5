@@ -257,6 +257,70 @@ TEST_CASE("FrameCache: writeback is batched, not once per frame", "[cache]") {
     REQUIRE(cache.sync_count() == before + 1);
 }
 
+TEST_CASE("FrameCache::read_frame_range crosses a row boundary",
+          "[frame_cache]") {
+    // The only test that started a range read mid-row and let it run into
+    // the next row was "read_frame_range agrees with read_pixel exactly",
+    // deleted when the frame-major layout change removed read_pixel --
+    // gather_pixel is built ON read_frame_range, so it could no longer serve
+    // as an independent check of that property. Nothing else in the suite
+    // covers it: test_shadow_buffers.cpp uses start_voxel 0 and 4 (with
+    // W=4), both row-aligned. Production does NOT restrict callers to
+    // row-aligned starts -- gpu_shadow_buffers.cpp:118 hands read_frame_range
+    // an arbitrary start_voxel taken straight from an arbitrary batch
+    // boundary. This exercises the specialised base+stride read path added
+    // in the layout change (not just element_offset's arithmetic) against
+    // values computed independently here.
+    const int W = 5, H = 3, NC = 2, NF = 3;
+    FrameCache cache(W, H, NC, /*max_frames*/ NF, "/tmp");
+
+    // Every (x, y, ch, f) gets its own value and its own coverage bit, so a
+    // read that lands on the wrong pixel, channel, or frame reads back a
+    // detectably wrong answer rather than a coincidental match.
+    auto value_of = [&](int x, int y, int ch, int f) {
+        const int index = ((f * H + y) * W + x) * NC + ch;
+        return static_cast<float>(index) / 100.0f;   // unique, in [0, 0.89]
+    };
+    auto covered_of = [&](int x, int y, int ch, int f) {
+        return ((x + 2 * y + ch + f) % 3) != 0;
+    };
+
+    for (int f = 0; f < NF; ++f) {
+        Image img(W, H, NC);
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x)
+                for (int ch = 0; ch < NC; ++ch)
+                    img.at(x, y, ch) = value_of(x, y, ch, f);
+        CoverageMask cov(W, H, NC);
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x)
+                for (int ch = 0; ch < NC; ++ch)
+                    cov.set_covered(ch, y, x, covered_of(x, y, ch, f));
+        cache.write_frame(img, f, cov);
+    }
+
+    // start_pixel=7 with W=5 is (x=2, y=1) -- W does not divide 7 -- and the
+    // 6-pixel run ends at p=12, (x=2, y=2): it crosses the row 1/row 2
+    // boundary mid-row on both ends. Frame 2 (of 3) and channel 1 (of 2) are
+    // both non-zero indices, so the frame and channel strides are genuinely
+    // exercised, not just the pixel stride.
+    const int start_pixel = 7, count = 6, ch = 1, f = 2;
+    REQUIRE(start_pixel % W != 0);
+    REQUIRE(start_pixel / W != (start_pixel + count - 1) / W);
+
+    std::vector<float>        vals(count);
+    std::vector<std::uint8_t> ok(count);
+    REQUIRE(cache.read_frame_range(f, start_pixel, count, ch,
+                                   vals.data(), ok.data()));
+
+    for (int i = 0; i < count; ++i) {
+        const int p = start_pixel + i;
+        const int x = p % W, y = p / W;
+        REQUIRE(vals[i] == Catch::Approx(value_of(x, y, ch, f)).margin(1e-4));
+        REQUIRE(ok[i] == (covered_of(x, y, ch, f) ? 1 : 0));
+    }
+}
+
 TEST_CASE("FrameCache::read_frame_range refuses ranges it cannot serve",
           "[frame_cache]") {
     // Loud and total, never partial: a caller that silently got half a row
