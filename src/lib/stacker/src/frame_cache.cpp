@@ -210,4 +210,34 @@ int FrameCache::read_pixel(int x, int y, int ch, float* out_values,
     return n;
 }
 
+bool FrameCache::read_frame_range(int f, int start_pixel, int count, int ch,
+                                  float* out_values,
+                                  std::uint8_t* out_valid) const {
+    if (!mapped_ || out_values == nullptr) return false;
+    if (ch < 0 || ch >= n_channels_) return false;
+    if (count <= 0 || start_pixel < 0) return false;
+
+    const int n_written = n_frames_written_.load(std::memory_order_acquire);
+    if (f < 0 || f >= n_written) return false;
+
+    const int64_t n_pixels = static_cast<int64_t>(width_) * height_;
+    if (static_cast<int64_t>(start_pixel) + count > n_pixels) return false;
+
+    // Addressed through offset() per pixel, which is correct under ANY
+    // layout. That is deliberate: it is what lets the layout change in a
+    // later commit without this function moving. Task 4 specialises it once
+    // the stride is guaranteed.
+    for (int i = 0; i < count; ++i) {
+        const int p = start_pixel + i;
+        const size_t e = offset(p % width_, p / width_, ch, f);
+        out_values[i] = decode(mapped_[e]);
+        // cov_bit() is defined as identical to offset(), so the coverage
+        // plane stays in step with the values by construction.
+        if (out_valid)
+            out_valid[i] = static_cast<std::uint8_t>(
+                (coverage_bits_[e >> 3] >> (e & 7)) & 1u);
+    }
+    return true;
+}
+
 } // namespace nukex

@@ -75,6 +75,26 @@ public:
     int read_pixel(int x, int y, int ch, float* out_values,
                    std::uint8_t* out_valid) const;
 
+    /// Phase B: read one frame slot's channel over a contiguous pixel run.
+    ///
+    /// Pixels are addressed in raster order: `start_pixel` is `y*width + x`,
+    /// and `out_values[i]` receives pixel `start_pixel + i` of frame slot `f`.
+    /// `out_valid` may be null; when given it reports, per pixel, whether that
+    /// frame actually covered it.
+    ///
+    /// This is the granularity Phase B batches at, and the granularity the
+    /// storage layout is built for. Reading one pixel across all frames --
+    /// what read_pixel did -- is the access pattern a frame-major layout is
+    /// worst at, and it is why that method no longer exists.
+    ///
+    /// Returns false and writes NOTHING if `f` is not a written slot or the
+    /// range leaves the image. Refusing totally rather than partially matters:
+    /// a caller handed half a row would fit a distribution to whatever was
+    /// left in its buffer.
+    bool read_frame_range(int f, int start_pixel, int count, int ch,
+                          float* out_values,
+                          std::uint8_t* out_valid = nullptr) const;
+
     /// Number of frames written so far.
     int n_frames_written() const { return n_frames_written_.load(std::memory_order_relaxed); }
 

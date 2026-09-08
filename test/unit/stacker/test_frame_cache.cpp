@@ -209,3 +209,82 @@ TEST_CASE("FrameCache: writeback is batched, not once per frame", "[cache]") {
     cache.flush();
     REQUIRE(cache.sync_count() == before + 1);
 }
+
+TEST_CASE("FrameCache::read_frame_range agrees with read_pixel exactly",
+          "[frame_cache]") {
+    // read_frame_range is the batched read Phase B will use. Proving it
+    // against read_pixel while BOTH are on the same layout is what makes the
+    // later layout flip a single-variable change: if the goldens move after
+    // it, the layout is the only thing that can have caused it.
+    const int W = 5, H = 3, NC = 3, NF = 4;
+    FrameCache cache(W, H, NC, /*max_frames*/ 8, "/tmp");
+
+    for (int f = 0; f < NF; ++f) {
+        Image img(W, H, NC);
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x)
+                for (int ch = 0; ch < NC; ++ch)
+                    img.at(x, y, ch) = 0.02f * static_cast<float>(f)
+                                     + 0.01f * static_cast<float>(y * W + x)
+                                     + 0.25f * static_cast<float>(ch);
+        CoverageMask cov(W, H, NC);
+        for (int ch = 0; ch < NC; ++ch)
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x)
+                    cov.set_covered(ch, y, x, (x + y + f + ch) % 3 != 0);
+        cache.write_frame(img, f, cov);
+    }
+
+    // Whole image, every channel, every frame.
+    std::vector<float>        row(static_cast<std::size_t>(W) * H);
+    std::vector<std::uint8_t> ok(static_cast<std::size_t>(W) * H);
+    for (int ch = 0; ch < NC; ++ch) {
+        for (int f = 0; f < NF; ++f) {
+            REQUIRE(cache.read_frame_range(f, 0, W * H, ch,
+                                           row.data(), ok.data()));
+            for (int p = 0; p < W * H; ++p) {
+                float ref_vals[8];
+                std::uint8_t ref_ok[8];
+                const int n = cache.read_pixel(p % W, p / W, ch,
+                                               ref_vals, ref_ok);
+                REQUIRE(n == NF);
+                REQUIRE(row[p] == ref_vals[f]);      // exact, not Approx
+                REQUIRE(ok[p]  == ref_ok[f]);
+            }
+        }
+    }
+
+    // A partial run in the middle, which is what a partial final batch does.
+    REQUIRE(cache.read_frame_range(2, /*start_pixel*/ 4, /*count*/ 6, /*ch*/ 1,
+                                   row.data(), ok.data()));
+    for (int i = 0; i < 6; ++i) {
+        float ref_vals[8];
+        std::uint8_t ref_ok[8];
+        cache.read_pixel((4 + i) % W, (4 + i) / W, 1, ref_vals, ref_ok);
+        REQUIRE(row[i] == ref_vals[2]);
+        REQUIRE(ok[i]  == ref_ok[2]);
+    }
+
+    // out_valid is optional.
+    REQUIRE(cache.read_frame_range(0, 0, W * H, 0, row.data(), nullptr));
+}
+
+TEST_CASE("FrameCache::read_frame_range refuses ranges it cannot serve",
+          "[frame_cache]") {
+    // Loud and total, never partial: a caller that silently got half a row
+    // would fit a distribution to whatever was left in its buffer.
+    const int W = 4, H = 2;
+    FrameCache cache(W, H, 1, /*max_frames*/ 4, "/tmp");
+    Image img(W, H, 1);
+    img.fill(0.5f);
+    cache.write_frame(img, 0);
+
+    std::vector<float> row(16, -1.0f);
+    REQUIRE_FALSE(cache.read_frame_range(1, 0, W * H, 0, row.data(), nullptr));
+    REQUIRE_FALSE(cache.read_frame_range(-1, 0, W * H, 0, row.data(), nullptr));
+    REQUIRE_FALSE(cache.read_frame_range(0, 0, W * H + 1, 0, row.data(), nullptr));
+    REQUIRE_FALSE(cache.read_frame_range(0, W * H - 2, 4, 0, row.data(), nullptr));
+    REQUIRE_FALSE(cache.read_frame_range(0, -1, 2, 0, row.data(), nullptr));
+    REQUIRE_FALSE(cache.read_frame_range(0, 0, 2, 1, row.data(), nullptr));  // no ch 1
+    for (float v : row) REQUIRE(v == -1.0f);   // nothing was written
+}
