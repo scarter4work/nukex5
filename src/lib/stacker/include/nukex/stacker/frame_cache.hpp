@@ -108,9 +108,10 @@ public:
     /// only to bound how many dirty pages the machine is holding.
     void flush();
 
-    /// How many times writeback has been scheduled. Diagnostic: with a
-    /// pixel-major layout each frame dirties the whole mapping, so this
-    /// number multiplied by the cache size is roughly the volume written.
+    /// How many times writeback has been scheduled -- one per cached frame
+    /// plus any explicit flush(). Diagnostic: with a frame-major layout each
+    /// sync covers only that frame's own bytes, so this number multiplied by
+    /// one frame's size is roughly the volume written.
     int sync_count() const { return sync_count_; }
 
     /// Encode float to uint16.
@@ -152,8 +153,6 @@ private:
     int n_channels_ = 0;
     int max_frames_ = 0;
     int sync_count_ = 0;
-    /// Frames between scheduled writebacks. See flush() and write_frame().
-    static constexpr int kSyncEveryNFrames = 8;
     std::atomic<int> n_frames_written_{0};
     std::vector<int> frame_map_;   ///< local slot -> batch-global frame index
 
@@ -165,6 +164,13 @@ private:
     /// Bit index of (x, y, ch, f) in the coverage plane -- same ordering as
     /// offset(), so the two stay in step by construction.
     size_t cov_bit(int x, int y, int ch, int f) const { return offset(x, y, ch, f); }
+
+    /// Schedule writeback of one byte range of the mapping.
+    ///
+    /// msync needs a page-aligned address, so the range is widened outward to
+    /// page boundaries -- writing back a few neighbouring pages is free
+    /// compared with the alternative of writing back all of them.
+    void sync_range(std::size_t byte_begin, std::size_t byte_end);
 
     void cleanup();
 };

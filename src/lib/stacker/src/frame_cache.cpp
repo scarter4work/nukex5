@@ -82,13 +82,25 @@ void FrameCache::cleanup() {
     }
 }
 
+void FrameCache::sync_range(std::size_t byte_begin, std::size_t byte_end) {
+    if (!mapped_ || byte_end <= byte_begin) return;
+    const std::size_t page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    const std::size_t begin = byte_begin & ~(page - 1);
+    std::size_t end = (byte_end + page - 1) & ~(page - 1);
+    if (end > mapped_size_) end = mapped_size_;
+    if (end <= begin) return;
+    // MS_ASYNC only schedules it, so this never stalls the caching loop.
+    msync(reinterpret_cast<char*>(mapped_) + begin, end - begin, MS_ASYNC);
+}
+
 FrameCache::FrameCache(FrameCache&& other) noexcept
     : fd_(other.fd_), mapped_(other.mapped_), mapped_size_(other.mapped_size_),
+      coverage_bits_(other.coverage_bits_),
+      coverage_bytes_(other.coverage_bytes_),
       filepath_(std::move(other.filepath_)),
       width_(other.width_), height_(other.height_),
       n_channels_(other.n_channels_), max_frames_(other.max_frames_),
-      coverage_bits_(other.coverage_bits_),
-      coverage_bytes_(other.coverage_bytes_),
+      sync_count_(other.sync_count_),
       n_frames_written_(other.n_frames_written_.load(std::memory_order_relaxed)),
       frame_map_(std::move(other.frame_map_))
 {
@@ -109,6 +121,7 @@ FrameCache& FrameCache::operator=(FrameCache&& other) noexcept {
         height_ = other.height_;
         n_channels_ = other.n_channels_;
         max_frames_ = other.max_frames_;
+        sync_count_ = other.sync_count_;
         n_frames_written_.store(other.n_frames_written_.load(std::memory_order_relaxed),
                                 std::memory_order_relaxed);
         frame_map_ = std::move(other.frame_map_);
@@ -148,27 +161,29 @@ int FrameCache::write_frame(const Image& aligned, int global_index,
         }
     }
 
-    // Schedule writeback periodically -- NOT after every frame.
+    // Schedule writeback of THIS frame's bytes, and nothing else.
     //
-    // Dirty pages must still be bounded: a 33-frame 24 MP OSC cache is 5.2 GB
-    // of dirty page cache held alongside a 14.8 GB voxel cube, and on
-    // 2026-09-05 that was enough to get PixInsight OOM-killed mid-cache.
-    //
-    // But doing it every frame is enormously wasteful, because the layout is
-    // pixel-major: one frame's writes are strided across the whole mapping and
-    // touch EVERY page of it, so a per-frame msync pushes the entire cache
-    // file back to disk for the 66 MB that frame actually contains. Measured
-    // on a 156-frame 24 MP run: 1704 MB written per cached frame, 20.4 GB in
-    // 45 seconds, 26x write amplification -- and it is why Phase A's per-frame
-    // cost climbed from 3.85 s to 13.4 s as the cache filled.
-    //
-    // Every 8 frames keeps the dirty-page bound that mattered while cutting
-    // the forced writeback by the same factor. MS_ASYNC only schedules it, so
-    // this never stalls the caching loop.
-    if ((frame_index + 1) % kSyncEveryNFrames == 0) {
-        msync(mapped_, mapped_size_, MS_ASYNC);
-        ++sync_count_;
-    }
+    // Dirty pages have to be bounded: on 2026-09-05 a 33-frame 24 MP OSC
+    // cache held 5.2 GB of dirty page cache beside a 14.8 GB voxel cube and
+    // PixInsight was OOM-killed mid-cache. Under the old pixel-major layout
+    // bounding them per frame was ruinous -- one frame's writes were strided
+    // across the whole mapping, so an msync of it pushed the entire cache
+    // file back to disk for the 66 MB that frame actually held. Frame-major
+    // makes the frame's dirty pages contiguous, so the bound is per-frame
+    // again and costs one frame's worth of I/O.
+    const std::size_t frame_elems =
+        static_cast<std::size_t>(width_) * height_ * n_channels_;
+    const std::size_t values_begin =
+        frame_elems * static_cast<std::size_t>(frame_index) * sizeof(uint16_t);
+    sync_range(values_begin, values_begin + frame_elems * sizeof(uint16_t));
+
+    // The coverage bitplane is a second contiguous range, one bit per entry,
+    // indexed identically to the values.
+    const std::size_t plane_base =
+        frame_elems * static_cast<std::size_t>(max_frames_) * sizeof(uint16_t);
+    sync_range(plane_base + (frame_elems * static_cast<std::size_t>(frame_index)) / 8,
+               plane_base + (frame_elems * static_cast<std::size_t>(frame_index + 1) + 7) / 8);
+    ++sync_count_;
 
     frame_map_.push_back(global_index);
     // Published after the pixels are in place: Phase B reads

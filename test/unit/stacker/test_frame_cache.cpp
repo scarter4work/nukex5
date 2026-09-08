@@ -223,14 +223,16 @@ TEST_CASE("FrameCache: coverage survives the round trip", "[frame_cache]") {
     REQUIRE(ok[0] == 1);
 }
 
-TEST_CASE("FrameCache: writeback is batched, not once per frame", "[cache]") {
-    // Writeback is bounded but not per-frame-per-mapping. Under the old
-    // pixel-major layout one frame's writes were strided across the whole
-    // mapping, so msync()ing all of it after every frame forced the entire
-    // cache file back to disk for the 66 MB that frame actually held --
-    // 1704 MB per frame measured on a 156-frame 24 MP run, 26x amplification.
-    // Frame-major writes are sequential, so the sync can be narrowed instead
-    // of skipped; see the following task.
+TEST_CASE("FrameCache: writeback covers the frame just written, and only it",
+          "[frame_cache]") {
+    // Frame-major makes one frame's dirty pages a contiguous range, so the
+    // sync goes back to per-frame while touching that frame's 66 MB instead
+    // of the whole 10.4 GB mapping. That is a TIGHTER dirty-page bound than
+    // syncing every 8th frame, which is what the pixel-major layout forced.
+    //
+    // The bound matters: on 2026-09-05 a 33-frame 24 MP OSC cache held 5.2 GB
+    // of dirty page cache beside a 14.8 GB voxel cube and PixInsight was
+    // OOM-killed mid-cache.
     Image frame(8, 8, 1);
     FrameCache cache(8, 8, 1, 64, "/tmp");
     for (int f = 0; f < 32; ++f) {
@@ -239,11 +241,10 @@ TEST_CASE("FrameCache: writeback is batched, not once per frame", "[cache]") {
                 frame.at(x, y, 0) = static_cast<float>((f + x + y) % 16) / 16.0f;
         cache.write_frame(frame, f);
     }
-    INFO("syncs after 32 frames: " << cache.sync_count());
-    REQUIRE(cache.sync_count() < 32);
+    REQUIRE(cache.sync_count() == 32);   // one per frame, not one per eight
 
     // Every frame still reads back exactly. mmap is coherent within the
-    // process, so deferring writeback cannot change what Phase B sees.
+    // process, so writeback scheduling cannot change what Phase B sees.
     float values[64];
     const int n = gather_pixel(cache, 3, 5, 0, values);
     REQUIRE(n == 32);
