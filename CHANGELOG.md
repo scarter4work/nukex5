@@ -1,5 +1,38 @@
 # NukeX — Changelog
 
+## v5.0.3.3 — 2026-09-07
+
+### Fixed
+- **Green speckle in stretched colour images.** v5.0.3.2 started stretching each
+  channel separately, which is what restored the colour — but the shadow point
+  it clipped against was still derived from the *luminance*. Luminance is a
+  weighted average, so it is quieter than any single channel, and green carries
+  most of its weight. Red and blue therefore crossed the black point far more
+  often than green did: on a 114-frame stack, 2.2% of red pixels and 2.7% of
+  blue were crushed against 0.08% of green, and a pixel with red and blue dead
+  but green alive is not dark — it is **vivid green**. 118,722 of them, 1.6% of
+  the frame, scattered as single pixels.
+
+  Each channel's own noise now sets how low the black point may go. Measured on
+  the same data, coloured speckle fell from about 1.5% of the frame to 0.02%,
+  and — because those crushed pixels were themselves a green bias — colour
+  saturation went *up*, from 0.181 to 0.215.
+
+  If you saw this, it looked like fine green grain that noise reduction removed
+  suspiciously well. It was removing real pixels.
+
+### Added
+- **The background level is now a control.** The auto-stretch has always placed
+  the sky at 0.25 — the screen-autostretch convention — and that was fixed. It
+  is also what lifts the noise floor into plain view.
+
+  There is now a *Background level* slider in Options, from 0.05 to 0.50,
+  defaulting to 0.25 so nothing changes unless you move it. Lower it and the
+  sky darkens without losing any detail: faint grain stops competing with the
+  subject, and you may find you need much less noise reduction afterwards.
+  Raise it to hunt for the faintest structure. It affects the stretched image
+  only — the stacked and composed images are linear and untouched.
+
 ## v5.0.3.2 — 2026-09-07
 
 ### Fixed
