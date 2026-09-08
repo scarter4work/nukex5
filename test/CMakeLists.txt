@@ -57,6 +57,7 @@ nukex_add_test(test_coverage_mask unit/alignment/test_coverage_mask.cpp nukex4_a
 nukex_add_test(test_qe_database   unit/calibration/test_qe_database.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_channel_decomposer unit/calibration/test_channel_decomposer.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_ed25519_verify unit/calibration/test_ed25519_verify.cpp nukex4_calibration nukex4_io nukex4_core)
+nukex_add_test(test_frame_normalization unit/calibration/test_frame_normalization.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_qe_update unit/calibration/test_qe_update.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_qe_update_state unit/calibration/test_qe_update_state.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_background_neutralization unit/calibration/test_background_neutralization.cpp nukex4_calibration nukex4_io nukex4_core)
