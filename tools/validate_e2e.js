@@ -111,11 +111,23 @@ function collectLights(dir, glob, max_frames) {
 
 function findWindow(id_substr) {
    // The module registers output windows with names like "NukeX_stacked",
-   // "NukeX_noise", "NukeX_stretched".  Iterate all open windows and return
-   // the first whose mainView id contains id_substr.
+   // "NukeX_noise", "NukeX_stretched".
+   //
+   // EXACT id wins over a substring match, and that is load-bearing rather
+   // than tidy-mindedness.  From v5.0.4.1 a stack with more slots than a
+   // colour image can hold also opens one window per leftover slot --
+   // "NukeX_stacked_L" beside "NukeX_stacked" -- and a pure substring search
+   // would return whichever the window list happened to order first.  The
+   // golden would then hash the L plane on one run and the RGB image on the
+   // next, which reads as a nondeterministic pixel regression.
    var wins = ImageWindow.windows;
-   for (var i = 0; i < wins.length; i++) {
-      var w = wins[i];
+   var i, w;
+   for (i = 0; i < wins.length; i++) {
+      w = wins[i];
+      if (String(w.mainView.id) === id_substr) return w;
+   }
+   for (i = 0; i < wins.length; i++) {
+      w = wins[i];
       if (String(w.mainView.id).indexOf(id_substr) >= 0) return w;
    }
    return null;
@@ -222,6 +234,33 @@ function runPrimary(tc, out_dir, manifest) {
          catch (e) { hashes[tags[t] + "_hash_error"] = String(e); }
       }
    }
+
+   // Assert what has only ever been RECORDED.
+   //
+   // PixInsight turns every plane past the third of a colour image into an
+   // ALPHA channel and draws alpha as a transparency checkerboard.  A
+   // broadband OSC stack carries four slots -- R, G, B and a synthesized
+   // rec709 L -- so `NukeX_stacked` and `NukeX_noise` shipped their luminance
+   // as transparency for every release from v5.0.3.2 to v5.0.4.0.  `nc` was
+   // in this report the whole time, unasserted, which is exactly why nobody
+   // caught it.  A number you record but never check is not a test.
+   var alpha_violations = [];
+   for (var q = 0; q < tags.length; q++) {
+      var hq = hashes[tags[q]];
+      if (hq && hq.nc > 3)
+         alpha_violations.push(tags[q] + " nc=" + hq.nc);
+   }
+   if (alpha_violations.length > 0)
+      return { status: "fail",
+               reason: "output window has more than 3 channels, so PixInsight "
+                     + "renders the extra plane(s) as alpha: "
+                     + alpha_violations.join(", "),
+               elapsed_s: elapsed,
+               lights: lights.length,
+               n_frames_processed: nProcessed,
+               n_frames_failed_alignment: nFailed,
+               saved_paths: saved,
+               pixel_hashes: hashes };
 
    return {
       status:                    "ok",

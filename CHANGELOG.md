@@ -1,5 +1,42 @@
 # NukeX — Changelog
 
+## v5.0.4.1 — 2026-09-08
+
+### Fixed
+- **Stacked and noise images appeared as a white crosshatch.** A colour stack of
+  one-shot-colour or LRGB data carries four planes — red, green, blue, and a
+  synthesized luminance — and PixInsight treats any plane past the third as an
+  **alpha channel**, drawing it as a transparency checkerboard. NukeX was handing
+  its luminance over as transparency, so both windows opened as a crosshatch
+  instead of a picture.
+
+  Those two windows now open as a proper three-channel colour image, with any
+  extra slot given its own window beside it (`NukeX_stacked_L`), so nothing is
+  lost and nothing is mistaken for transparency. v5.0.3.2 found this same defect
+  and fixed it for the stretched image only; the E2E harness had been recording
+  the channel count all along without ever checking it, and now checks it.
+
+### Changed
+- **The auto-stretch no longer leaves the sky at a quarter brightness.** The
+  default sky level drops from 0.25 to 0.12. 0.25 is the screen-autostretch
+  convention, but a screen stretch is something you look *through*, not
+  something you keep — it spends a quarter of the range on empty sky and leaves
+  the subject on a bright grey pedestal, which is what "washed out" looks like.
+
+  Measured on the composed output of four real sessions, colour saturation rises
+  **1.34× to 1.72×**, and nothing is clipped in the process — no shadow is
+  crushed and no highlight blown, because the black point is set independently.
+
+  | session | before | after |
+  |---------|-------:|------:|
+  | M33, one-shot colour | 0.069 | 0.118 |
+  | M27 2023, one-shot colour | 0.082 | 0.110 |
+  | M27 2025, LRGB | 0.067 | 0.115 |
+  | M16, dual narrowband | 0.473 | 0.691 |
+
+  It remains a control: raise it again in the interface if you prefer a
+  brighter sky.
+
 ## v5.0.4.0 — 2026-09-08
 
 ### Added

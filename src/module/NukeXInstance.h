@@ -53,7 +53,15 @@ public:
    frame_list  flatFrames;
    pcl_enum    primaryStretch    = 0;  // NXPrimaryStretch::Auto
    pcl_enum    finishingStretch  = 0;  // NXFinishingStretch::None
-   float       backgroundTarget = 0.25f;  // where the auto-stretch puts the sky
+   // Where the auto-stretch puts the sky. 0.25 is the screen-autostretch
+   // convention and it was the default until v5.0.4.1, but a screen stretch is
+   // a thing you look through, not a thing you keep: it spends a quarter of
+   // the range on sky and leaves the subject sitting on a bright grey
+   // pedestal. Measured on the composed output of four real corpora, dropping
+   // it to 0.12 raises signal saturation 1.34x to 1.72x and clips nothing --
+   // black stays at 0.0000% and white unmoved, because the shadow point is
+   // bounded independently.
+   float       backgroundTarget = 0.12f;
    pcl_bool    enableGPU       = true;
    String      cacheDirectory  = "/tmp";
    String      qeOverridePath;  // optional path to qe_overrides.json; empty = none

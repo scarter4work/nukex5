@@ -54,7 +54,15 @@ public:
     /// uses, which is the convention users of this ecosystem already read
     /// their images against, and SP = median - 2.8 sigma is that same
     /// autostretch's shadow-clipping convention.
-    float auto_tune(const Image& img, float target_background = 0.25f);
+    /// Solve log_D so the stretched background lands on `target_background`.
+    ///
+    /// 0.12, not the 0.25 screen-autostretch convention: 0.25 spends a quarter
+    /// of the output range on sky and leaves the subject on a bright grey
+    /// pedestal, which is what "washed out" looks like numerically. Measured
+    /// across four real corpora, 0.12 raises signal saturation 1.34x-1.72x
+    /// and clips nothing. Kept as an argument because the module exposes it
+    /// as a user control.
+    float auto_tune(const Image& img, float target_background = 0.12f);
 
     /// Scalar version: stretches a single luminance value.
     float apply_scalar(float x) const override;

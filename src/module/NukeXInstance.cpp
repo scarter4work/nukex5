@@ -22,6 +22,8 @@
 
 // NukeX pipeline headers
 #include "nukex/stacker/stacking_engine.hpp"
+#include "nukex/core/cube.hpp"
+#include "nukex/core/channel_config.hpp"
 #include "nukex/compose/color_composer.hpp"
 #include "nukex/stretch/veralux_stretch.hpp"
 #include "nukex/stretch/stretch_pipeline.hpp"
@@ -489,6 +491,106 @@ bool NukeXInstance::CanExecuteGlobal( String& whyNot ) const
    return true;
 }
 
+
+// ── Opening a multi-slot output without inventing transparency ──────────
+//
+// ImageWindow with color=true treats every plane past the THIRD as an ALPHA
+// channel, and PixInsight draws alpha as a transparency checkerboard. A
+// broadband OSC stack carries four slots -- R, G, B and a synthesized rec709
+// L -- so `NukeX_stacked` and `NukeX_noise` were handing their luminance to
+// PixInsight as transparency. The user sees a crosshatched image and no data.
+//
+// v5.0.3.2 found exactly this defect and fixed it for the STRETCHED window by
+// routing that one through the 3-channel composed image. It left these two,
+// and the E2E records `nc` without ever asserting it, so a 4-channel output
+// sailed through every release since.
+//
+// R, G and B are selected BY NAME rather than by position: an LRGB-mono batch
+// merges its slots in the order the frames arrive, so channel 0 is as likely
+// to be L as R, and taking "the first three" would show L,R,G as an RGB
+// triplet. Every slot that is not one of those three gets its own
+// single-channel window, which loses nothing and keeps a real L inspectable.
+static void OpenSlotWindows( const nukex::Image& img,
+                             const nukex::ChannelConfig* cfg,
+                             const IsoString& base_id,
+                             const pcl::FITSKeywordArray& ka )
+{
+   const int w  = img.width();
+   const int h  = img.height();
+   const int nc = img.n_channels();
+   if ( w <= 0 || h <= 0 || nc <= 0 )
+      return;
+
+   auto slot_of = [&]( int i ) -> std::string {
+      if ( cfg != nullptr && i < static_cast<int>( cfg->n_channels ) )
+         return cfg->slot_name( i );
+      return std::string();
+   };
+   auto index_of = [&]( const char* name ) -> int {
+      for ( int i = 0; i < nc; ++i )
+         if ( slot_of( i ) == name )
+            return i;
+      return -1;
+   };
+
+   // Copy an arbitrary set of source planes into a freshly created window.
+   auto emit = [&]( const Array<int>& planes, bool colour, const IsoString& id )
+   {
+      ImageWindow win( w, h, planes.Length(), 32, true, colour, true, id );
+      View view = win.MainView();
+      ImageVariant v = view.Image();
+      if ( v.IsFloatSample() && v.BitsPerSample() == 32 )
+      {
+         pcl::Image& dst_img = static_cast<pcl::Image&>( *v );
+         for ( size_type k = 0; k < planes.Length(); ++k )
+         {
+            const float* src = img.channel_data( planes[k] );
+            float* dst = dst_img.PixelData( static_cast<int>( k ) );
+            ::memcpy( dst, src, static_cast<size_t>( w ) * h * sizeof( float ) );
+         }
+      }
+      win.SetKeywords( ka );
+      win.Show();
+   };
+
+   const int ri = index_of( "R" ), gi = index_of( "G" ), bi = index_of( "B" );
+   const bool have_rgb = ( ri >= 0 && gi >= 0 && bi >= 0 );
+
+   if ( !have_rgb || nc <= 3 )
+   {
+      // Nothing to split: at three planes or fewer PixInsight has no spare
+      // plane to reinterpret, and without a named R/G/B triple there is no
+      // colour image to build. Emit as-is, which is the pre-existing
+      // behaviour and stays bit-identical for every mono and dual-NB stack.
+      Array<int> all;
+      for ( int i = 0; i < nc; ++i )
+         all.Add( i );
+      emit( all, nc >= 3, base_id );
+      return;
+   }
+
+   Array<int> rgb;
+   rgb.Add( ri ); rgb.Add( gi ); rgb.Add( bi );
+   emit( rgb, true, base_id );
+
+   for ( int i = 0; i < nc; ++i )
+   {
+      if ( i == ri || i == gi || i == bi )
+         continue;
+      std::string slot = slot_of( i );
+      if ( slot.empty() )
+         slot = "ch" + std::to_string( i );
+      // Window identifiers accept only alphanumerics and underscore.
+      for ( char& c : slot )
+         if ( !std::isalnum( static_cast<unsigned char>( c ) ) )
+            c = '_';
+      Array<int> one;
+      one.Add( i );
+      emit( one, false, base_id + "_" + IsoString( slot.c_str() ) );
+   }
+}
+
+
 bool NukeXInstance::ExecuteGlobal()
 {
    // Banner first, before anything else reaches the console.  It is UTF-8
@@ -701,43 +803,17 @@ bool NukeXInstance::ExecuteGlobal()
    // Create output ImageWindow with the stacked result
    if ( !result.stacked.empty() )
    {
-      int w = result.stacked.width();
-      int h = result.stacked.height();
-      int nc = result.stacked.n_channels();
-
-      ImageWindow window( w, h, nc,
-                          32,    // bits per sample (float32)
-                          true,  // float sample
-                          nc >= 3, // color if 3+ channels
-                          true,  // initialProcessing
-                          "NukeX_stacked" );
-
-      View view = window.MainView();
-      ImageVariant v = view.Image();
-
-      if ( v.IsFloatSample() && v.BitsPerSample() == 32 )
-      {
-         pcl::Image& img = static_cast<pcl::Image&>( *v );
-         for ( int ch = 0; ch < nc; ch++ )
-         {
-            const float* src = result.stacked.channel_data( ch );
-            float* dst = img.PixelData( ch );
-            ::memcpy( dst, src, w * h * sizeof( float ) );
-         }
-      }
-
       // Provenance: stamp the FITS header so this window round-trips
       // through Save/Load with NukeX identity, version, and the run's
       // alignment-result counters intact.
-      {
-         pcl::FITSKeywordArray ka = base_output_keywords(
-             NUKEX_VERSION_STRING, "stacked",
-             result.n_frames_processed, result.n_frames_failed_alignment );
-         append_calibration_keywords( ka, result );
-         window.SetKeywords( ka );
-      }
+      pcl::FITSKeywordArray ka = base_output_keywords(
+          NUKEX_VERSION_STRING, "stacked",
+          result.n_frames_processed, result.n_frames_failed_alignment );
+      append_calibration_keywords( ka, result );
 
-      window.Show();
+      OpenSlotWindows( result.stacked,
+                       result.cube ? &result.cube->channel_config : nullptr,
+                       "NukeX_stacked", ka );
       progress.message( "Stacked image opened." );
    }
 
@@ -1076,34 +1152,14 @@ bool NukeXInstance::ExecuteGlobal()
    // Create noise map window
    if ( !result.noise_map.empty() )
    {
-      int w = result.noise_map.width();
-      int h = result.noise_map.height();
-      int nc = result.noise_map.n_channels();
+      pcl::FITSKeywordArray ka = base_output_keywords(
+          NUKEX_VERSION_STRING, "noise",
+          result.n_frames_processed, result.n_frames_failed_alignment );
+      append_calibration_keywords( ka, result );
 
-      ImageWindow nw( w, h, nc, 32, true, nc >= 3, true, "NukeX_noise" );
-      View nv = nw.MainView();
-      ImageVariant nvi = nv.Image();
-
-      if ( nvi.IsFloatSample() && nvi.BitsPerSample() == 32 )
-      {
-         pcl::Image& ni = static_cast<pcl::Image&>( *nvi );
-         for ( int ch = 0; ch < nc; ch++ )
-         {
-            const float* src = result.noise_map.channel_data( ch );
-            float* dst = ni.PixelData( ch );
-            ::memcpy( dst, src, w * h * sizeof( float ) );
-         }
-      }
-
-      {
-         pcl::FITSKeywordArray ka = base_output_keywords(
-             NUKEX_VERSION_STRING, "noise",
-             result.n_frames_processed, result.n_frames_failed_alignment );
-         append_calibration_keywords( ka, result );
-         nw.SetKeywords( ka );
-      }
-
-      nw.Show();
+      OpenSlotWindows( result.noise_map,
+                       result.cube ? &result.cube->channel_config : nullptr,
+                       "NukeX_noise", ka );
       progress.message( "Noise map opened." );
    }
 
