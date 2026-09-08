@@ -6,6 +6,24 @@
 
 using namespace nukex;
 
+namespace {
+// The old read_pixel, rebuilt on the range read, so the existing cases keep
+// asserting what they always asserted. Test-only: production code reads by
+// frame-row, which is the access pattern the layout is built for.
+int gather_pixel(const FrameCache& cache, int x, int y, int ch,
+                 float* out_values, std::uint8_t* out_valid = nullptr) {
+    const int n = cache.n_frames_written();
+    const int p = y * cache.width() + x;
+    for (int f = 0; f < n; ++f) {
+        std::uint8_t ok = 0;
+        if (!cache.read_frame_range(f, p, 1, ch, out_values + f, &ok))
+            return f;
+        if (out_valid) out_valid[f] = ok;
+    }
+    return n;
+}
+} // namespace
+
 TEST_CASE("FrameCache::encode/decode roundtrip", "[cache]") {
     // Test several values across [0, 1]
     float test_values[] = {0.0f, 0.001f, 0.25f, 0.5f, 0.75f, 0.999f, 1.0f};
@@ -21,6 +39,37 @@ TEST_CASE("FrameCache::encode clamps to [0, 1]", "[cache]") {
     REQUIRE(FrameCache::encode(1.5f) == 65535);
 }
 
+TEST_CASE("FrameCache layout is frame-major", "[frame_cache]") {
+    // Why this is asserted rather than left implicit: under the old
+    // pixel-major index, consecutive writes for ONE frame were max_frames
+    // elements apart, so writing a 66 MB frame dirtied every page of a
+    // 10.4 GB mapping. Measured from /proc/diskstats on a 156-frame 24 MP
+    // run: 1,704 MB written per frame, 26x amplification, and Phase A's
+    // per-frame cost climbing 3.85 s -> 13.4 s as the cache filled.
+    const int W = 5, H = 3, NC = 3;
+
+    // One frame occupies exactly W*H*NC consecutive elements.
+    REQUIRE(FrameCache::element_offset(W, H, NC, 0, 0, 0, 0) == 0);
+    REQUIRE(FrameCache::element_offset(W, H, NC, 0, 0, 0, 1)
+                == static_cast<std::size_t>(W) * H * NC);
+
+    // Within a frame: channel is fastest, then x, then y.
+    REQUIRE(FrameCache::element_offset(W, H, NC, 0, 0, 1, 0) == 1);
+    REQUIRE(FrameCache::element_offset(W, H, NC, 1, 0, 0, 0) == NC);
+    REQUIRE(FrameCache::element_offset(W, H, NC, 0, 1, 0, 0) == W * NC);
+
+    // The index does not depend on max_frames at all, which is the property
+    // that makes a frame's writes sequential regardless of batch depth.
+    REQUIRE(FrameCache::element_offset(W, H, NC, 3, 2, 1, 4)
+                == 4 * static_cast<std::size_t>(W) * H * NC
+                 + (2 * static_cast<std::size_t>(W) + 3) * NC + 1);
+
+    // And a whole frame-row of one channel is a single strided span:
+    // consecutive pixels are exactly n_channels apart.
+    REQUIRE(FrameCache::element_offset(W, H, NC, 1, 0, 2, 7)
+                - FrameCache::element_offset(W, H, NC, 0, 0, 2, 7) == NC);
+}
+
 TEST_CASE("FrameCache: write and read back single frame", "[cache]") {
     Image frame(4, 4, 1);
     for (int y = 0; y < 4; y++)
@@ -32,7 +81,7 @@ TEST_CASE("FrameCache: write and read back single frame", "[cache]") {
     REQUIRE(cache.n_frames_written() == 1);
 
     float values[10];
-    int n = cache.read_pixel(2, 1, 0, values);
+    int n = gather_pixel(cache, 2, 1, 0, values);
     REQUIRE(n == 1);
     // Pixel (2, 1): value = (2 + 1*4) / 16 = 0.375
     REQUIRE(values[0] == Catch::Approx(0.375f).margin(0.001f));
@@ -53,14 +102,14 @@ TEST_CASE("FrameCache: write multiple frames, read all back", "[cache]") {
     REQUIRE(cache.n_frames_written() == 3);
 
     float values[10];
-    int n = cache.read_pixel(4, 4, 0, values);
+    int n = gather_pixel(cache, 4, 4, 0, values);
     REQUIRE(n == 3);
     REQUIRE(values[0] == Catch::Approx(0.3f).margin(0.001f));
     REQUIRE(values[1] == Catch::Approx(0.5f).margin(0.001f));
     REQUIRE(values[2] == Catch::Approx(0.7f).margin(0.001f));
 
     // Channel 1 should also work
-    n = cache.read_pixel(4, 4, 1, values);
+    n = gather_pixel(cache, 4, 4, 1, values);
     REQUIRE(n == 3);
     REQUIRE(values[0] == Catch::Approx(0.3f).margin(0.001f));
 }
@@ -91,7 +140,7 @@ TEST_CASE("FrameCache: quantization error within tolerance", "[cache]") {
     float values[1];
     for (int y = 0; y < 16; y++) {
         for (int x = 0; x < 16; x++) {
-            cache.read_pixel(x, y, 0, values);
+            gather_pixel(cache, x, y, 0, values);
             float original = frame.at(x, y, 0);
             REQUIRE(std::fabs(values[0] - original) < 2.0f / 65535.0f);
         }
@@ -121,7 +170,7 @@ TEST_CASE("FrameCache: a sparse global frame set reads back only what it receive
     REQUIRE(cache.n_frames_written() == 3);   // not 13
 
     float out[20] = {0};
-    const int n = cache.read_pixel(0, 0, 0, out);
+    const int n = gather_pixel(cache, 0, 0, 0, out);
     REQUIRE(n == 3);
     for (int i = 0; i < 3; i++)
         REQUIRE(out[i] == Catch::Approx(values[i]).margin(1e-4));
@@ -156,12 +205,12 @@ TEST_CASE("FrameCache: coverage survives the round trip", "[frame_cache]") {
     float vals[4] = {0};
     std::uint8_t ok[4] = {9, 9, 9, 9};
 
-    int n = cache.read_pixel(0, 0, 0, vals, ok);
+    int n = gather_pixel(cache, 0, 0, 0, vals, ok);
     REQUIRE(n == 2);
     REQUIRE(ok[0] == 1);   // frame 0: covered
     REQUIRE(ok[1] == 1);   // frame 1: covered here
 
-    n = cache.read_pixel(1, 1, 0, vals, ok);
+    n = gather_pixel(cache, 1, 1, 0, vals, ok);
     REQUIRE(n == 2);
     REQUIRE(ok[0] == 1);   // frame 0 covered everything
     REQUIRE(ok[1] == 0);   // frame 1 did NOT cover this pixel
@@ -170,20 +219,18 @@ TEST_CASE("FrameCache: coverage survives the round trip", "[frame_cache]") {
     REQUIRE(vals[1] == Catch::Approx(0.5f).margin(1e-4));
 
     // An omitted mask means "cloned, not warped": covers itself completely.
-    REQUIRE(cache.read_pixel(1, 0, 0, vals, ok) == 2);
+    REQUIRE(gather_pixel(cache, 1, 0, 0, vals, ok) == 2);
     REQUIRE(ok[0] == 1);
 }
 
 TEST_CASE("FrameCache: writeback is batched, not once per frame", "[cache]") {
-    // The layout is pixel-major, so ONE frame's writes are strided across the
-    // whole mapping and touch every page of it. msync()ing the whole mapping
-    // after every frame therefore forces the entire cache file back to disk
-    // per frame, not the 66 MB the frame actually contains.
-    //
-    // Measured on a 156-frame 24 MP run: 1704 MB written to the NVMe per
-    // cached frame, 20.4 GB in 45 seconds -- 26x write amplification, and it
-    // is what took Phase A's per-frame cost from 3.85 s to 13.4 s as the
-    // cache filled.
+    // Writeback is bounded but not per-frame-per-mapping. Under the old
+    // pixel-major layout one frame's writes were strided across the whole
+    // mapping, so msync()ing all of it after every frame forced the entire
+    // cache file back to disk for the 66 MB that frame actually held --
+    // 1704 MB per frame measured on a 156-frame 24 MP run, 26x amplification.
+    // Frame-major writes are sequential, so the sync can be narrowed instead
+    // of skipped; see the following task.
     Image frame(8, 8, 1);
     FrameCache cache(8, 8, 1, 64, "/tmp");
     for (int f = 0; f < 32; ++f) {
@@ -198,7 +245,7 @@ TEST_CASE("FrameCache: writeback is batched, not once per frame", "[cache]") {
     // Every frame still reads back exactly. mmap is coherent within the
     // process, so deferring writeback cannot change what Phase B sees.
     float values[64];
-    const int n = cache.read_pixel(3, 5, 0, values);
+    const int n = gather_pixel(cache, 3, 5, 0, values);
     REQUIRE(n == 32);
     for (int f = 0; f < 32; ++f)
         REQUIRE(values[f] ==
@@ -208,65 +255,6 @@ TEST_CASE("FrameCache: writeback is batched, not once per frame", "[cache]") {
     const int before = cache.sync_count();
     cache.flush();
     REQUIRE(cache.sync_count() == before + 1);
-}
-
-TEST_CASE("FrameCache::read_frame_range agrees with read_pixel exactly",
-          "[frame_cache]") {
-    // read_frame_range is the batched read Phase B will use. Proving it
-    // against read_pixel while BOTH are on the same layout is what makes the
-    // later layout flip a single-variable change: if the goldens move after
-    // it, the layout is the only thing that can have caused it.
-    const int W = 5, H = 3, NC = 3, NF = 4;
-    FrameCache cache(W, H, NC, /*max_frames*/ 8, "/tmp");
-
-    for (int f = 0; f < NF; ++f) {
-        Image img(W, H, NC);
-        for (int y = 0; y < H; ++y)
-            for (int x = 0; x < W; ++x)
-                for (int ch = 0; ch < NC; ++ch)
-                    img.at(x, y, ch) = 0.02f * static_cast<float>(f)
-                                     + 0.01f * static_cast<float>(y * W + x)
-                                     + 0.25f * static_cast<float>(ch);
-        CoverageMask cov(W, H, NC);
-        for (int ch = 0; ch < NC; ++ch)
-            for (int y = 0; y < H; ++y)
-                for (int x = 0; x < W; ++x)
-                    cov.set_covered(ch, y, x, (x + y + f + ch) % 3 != 0);
-        cache.write_frame(img, f, cov);
-    }
-
-    // Whole image, every channel, every frame.
-    std::vector<float>        row(static_cast<std::size_t>(W) * H);
-    std::vector<std::uint8_t> ok(static_cast<std::size_t>(W) * H);
-    for (int ch = 0; ch < NC; ++ch) {
-        for (int f = 0; f < NF; ++f) {
-            REQUIRE(cache.read_frame_range(f, 0, W * H, ch,
-                                           row.data(), ok.data()));
-            for (int p = 0; p < W * H; ++p) {
-                float ref_vals[8];
-                std::uint8_t ref_ok[8];
-                const int n = cache.read_pixel(p % W, p / W, ch,
-                                               ref_vals, ref_ok);
-                REQUIRE(n == NF);
-                REQUIRE(row[p] == ref_vals[f]);      // exact, not Approx
-                REQUIRE(ok[p]  == ref_ok[f]);
-            }
-        }
-    }
-
-    // A partial run in the middle, which is what a partial final batch does.
-    REQUIRE(cache.read_frame_range(2, /*start_pixel*/ 4, /*count*/ 6, /*ch*/ 1,
-                                   row.data(), ok.data()));
-    for (int i = 0; i < 6; ++i) {
-        float ref_vals[8];
-        std::uint8_t ref_ok[8];
-        cache.read_pixel((4 + i) % W, (4 + i) / W, 1, ref_vals, ref_ok);
-        REQUIRE(row[i] == ref_vals[2]);
-        REQUIRE(ok[i]  == ref_ok[2]);
-    }
-
-    // out_valid is optional.
-    REQUIRE(cache.read_frame_range(0, 0, W * H, 0, row.data(), nullptr));
 }
 
 TEST_CASE("FrameCache::read_frame_range refuses ranges it cannot serve",

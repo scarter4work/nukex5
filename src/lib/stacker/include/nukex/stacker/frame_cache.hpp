@@ -11,8 +11,17 @@ namespace nukex {
 
 /// Disk-backed storage for aligned frames using memory-mapped uint16 encoding.
 ///
-/// Pixel-major layout: read_pixel(x,y,ch) returns N contiguous uint16 values,
-/// one per frame, for sequential disk reads during Phase B.
+/// Frame-major layout: one frame's pixels are consecutive, so Phase A writes
+/// each frame as a single sequential run and touches nothing else. The
+/// previous pixel-major index put consecutive writes for one frame
+/// max_frames elements apart, which meant writing a 66 MB frame dirtied every
+/// page of a 10.4 GB mapping -- 26x write amplification measured on a
+/// 156-frame 24 MP run, and the reason Phase A's per-frame cost climbed from
+/// 3.85 s to 13.4 s as the cache filled.
+///
+/// Phase B reads it back a frame-row at a time (read_frame_range), which is
+/// how it already batches: n_frames contiguous runs per batch rather than one
+/// gather per pixel.
 ///
 /// Encoding: float [0,1] -> uint16 via round(value * 65535)
 /// Decoding: uint16 -> float via stored * (1.0f / 65535.0f)
@@ -64,17 +73,6 @@ public:
              ? frame_map_[local] : -1;
     }
 
-    /// Phase B: Read all frame values at one pixel/channel, decoded to float.
-    /// out_values must have space for at least n_frames_ floats.
-    /// Returns number of frames written so far.
-    int read_pixel(int x, int y, int ch, float* out_values) const;
-
-    /// As read_pixel, and additionally reports which of those frames actually
-    /// covered this pixel. `out_valid[f]` is 1 when frame slot f has real
-    /// data here, 0 when the warp left it outside the source.
-    int read_pixel(int x, int y, int ch, float* out_values,
-                   std::uint8_t* out_valid) const;
-
     /// Phase B: read one frame slot's channel over a contiguous pixel run.
     ///
     /// Pixels are addressed in raster order: `start_pixel` is `y*width + x`,
@@ -121,6 +119,23 @@ public:
     /// Decode uint16 to float.
     static float decode(uint16_t stored);
 
+    /// Element index of (x, y, ch) in frame slot f.
+    ///
+    /// Public and static so the layout can be asserted directly rather than
+    /// inferred from read-back values -- the storage order is the whole point
+    /// of this class, and it should not be possible to change it silently.
+    ///
+    /// Note what is ABSENT: max_frames. The old index multiplied by it, which
+    /// is why one frame's writes were spread across the entire mapping.
+    static std::size_t element_offset(int width, int height, int n_channels,
+                                      int x, int y, int ch, int f) {
+        const std::size_t frame_elems =
+            static_cast<std::size_t>(width) * height * n_channels;
+        return static_cast<std::size_t>(f) * frame_elems
+             + (static_cast<std::size_t>(y) * width + x) * n_channels
+             + static_cast<std::size_t>(ch);
+    }
+
 private:
     int fd_ = -1;
     uint16_t* mapped_ = nullptr;
@@ -144,9 +159,7 @@ private:
 
     /// Element offset for pixel (x, y), channel ch, frame f.
     size_t offset(int x, int y, int ch, int f) const {
-        return static_cast<size_t>(
-            ((static_cast<int64_t>(y) * width_ + x) * n_channels_ + ch)
-            * max_frames_ + f);
+        return element_offset(width_, height_, n_channels_, x, y, ch, f);
     }
 
     /// Bit index of (x, y, ch, f) in the coverage plane -- same ordering as

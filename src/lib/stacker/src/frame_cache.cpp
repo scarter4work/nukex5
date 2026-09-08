@@ -183,33 +183,6 @@ void FrameCache::flush() {
     ++sync_count_;
 }
 
-int FrameCache::read_pixel(int x, int y, int ch, float* out_values) const {
-    return read_pixel(x, y, ch, out_values, nullptr);
-}
-
-int FrameCache::read_pixel(int x, int y, int ch, float* out_values,
-                           std::uint8_t* out_valid) const {
-    if (!mapped_) return 0;
-
-    int n = n_frames_written_.load(std::memory_order_acquire);
-    size_t base = offset(x, y, ch, 0);
-
-    // Contiguous uint16 values for this pixel/channel across all frames
-    for (int f = 0; f < n; f++) {
-        out_values[f] = decode(mapped_[base + f]);
-    }
-    if (out_valid) {
-        const size_t bbase = cov_bit(x, y, ch, 0);
-        for (int f = 0; f < n; f++) {
-            const size_t b = bbase + f;
-            out_valid[f] = static_cast<std::uint8_t>(
-                (coverage_bits_[b >> 3] >> (b & 7)) & 1u);
-        }
-    }
-
-    return n;
-}
-
 bool FrameCache::read_frame_range(int f, int start_pixel, int count, int ch,
                                   float* out_values,
                                   std::uint8_t* out_valid) const {
@@ -223,16 +196,14 @@ bool FrameCache::read_frame_range(int f, int start_pixel, int count, int ch,
     const int64_t n_pixels = static_cast<int64_t>(width_) * height_;
     if (static_cast<int64_t>(start_pixel) + count > n_pixels) return false;
 
-    // Addressed through offset() per pixel, which is correct under ANY
-    // layout. That is deliberate: it is what lets the layout change in a
-    // later commit without this function moving. Task 4 specialises it once
-    // the stride is guaranteed.
+    // One frame's samples are consecutive, so a whole frame-row of one
+    // channel is a single span at a stride of n_channels_ -- and stride 1 for
+    // the mono case. Two integer divisions per pixel is what this replaces.
+    const size_t base = offset(start_pixel % width_, start_pixel / width_, ch, f);
+    const size_t stride = static_cast<size_t>(n_channels_);
     for (int i = 0; i < count; ++i) {
-        const int p = start_pixel + i;
-        const size_t e = offset(p % width_, p / width_, ch, f);
+        const size_t e = base + static_cast<size_t>(i) * stride;
         out_values[i] = decode(mapped_[e]);
-        // cov_bit() is defined as identical to offset(), so the coverage
-        // plane stays in step with the values by construction.
         if (out_valid)
             out_valid[i] = static_cast<std::uint8_t>(
                 (coverage_bits_[e >> 3] >> (e & 7)) & 1u);
