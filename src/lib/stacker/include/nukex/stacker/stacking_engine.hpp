@@ -71,6 +71,31 @@ public:
         // so no shipped table can enumerate them. Empty = none.
         std::string           filter_alias_path;
         GPUExecutorConfig     gpu_config;
+
+        /// Bring every frame onto a common sky level and spread before it is
+        /// accumulated (v' = scale*v + offset, solved per cube slot).
+        ///
+        /// Sky level and transparency vary across a session and NukeX used to
+        /// do nothing about it, so the per-voxel fit met a bimodal population
+        /// and modelled a per-FRAME effect per-PIXEL. Measured across five
+        /// real corpora that cost 1.00x to 5.19x the pixel-scale noise of a
+        /// plain robust estimator on identical inputs.
+        ///
+        /// A stable session is an exact no-op, so this is on by default. It
+        /// exists as a switch so the effect can be measured single-variable
+        /// against a golden, which is how it was validated.
+        bool                  normalize_frames = true;
+
+        /// Whether normalisation may rescale a frame, or only re-level it.
+        ///
+        /// The additive half removes the sky-level differences the per-voxel
+        /// fit was mistaking for per-pixel bimodality, and cannot change a
+        /// frame's signal amplitude. The multiplicative half equalises noise
+        /// scale, which is only meaningful when `scale` is really noise --
+        /// see measure_channel_sky, where getting that wrong once made a real
+        /// stack 8% noisier. Kept switchable so the two halves can be
+        /// measured apart rather than argued about.
+        bool                  normalize_scale  = true;
     };
 
     explicit StackingEngine(const Config& config);

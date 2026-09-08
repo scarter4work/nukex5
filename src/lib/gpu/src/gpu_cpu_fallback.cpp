@@ -253,10 +253,20 @@ void GPUCPUFallback::select_pixels(
                 if (fst.has_noise_keywords) {
                     float g = std::max(fst.gain, 1e-10f);
                     float rn = fst.read_noise;
-                    float value_adu = value * 65535.0f;
+                    // Undo Phase A's normalisation before the Poisson term:
+                    // shot noise belongs to the photons actually collected,
+                    // so it is evaluated on the raw value and carried back
+                    // through Var(a*x + b) = a^2 Var(x). `ch` is the cube
+                    // slot. At the identity this is bit-for-bit the old
+                    // expression. Must match select_pixels.cl exactly --
+                    // test_gpu_agreement holds the two together.
+                    float a = fst.norm_scale[ch];
+                    float b = fst.norm_offset[ch];
+                    if (!(a > 0.0f)) { a = 1.0f; b = 0.0f; }
+                    float value_adu = ((value - b) / a) * 65535.0f;
                     float shot_var = value_adu / g;
                     float read_var = (rn * rn) / (g * g);
-                    sigma2 = (shot_var + read_var) / (65535.0f * 65535.0f);
+                    sigma2 = a * a * (shot_var + read_var) / (65535.0f * 65535.0f);
                 } else {
                     sigma2 = welford_var;
                 }
