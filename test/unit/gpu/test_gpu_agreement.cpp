@@ -234,6 +234,74 @@ TEST_CASE("GPU Agreement: select_pixels GPU == CPU", "[gpu][agreement]") {
     std::cout << "select_pixels: GPU == CPU ✓\n";
 }
 
+TEST_CASE("GPU Agreement: select_pixels agrees under NON-identity sky "
+          "normalisation", "[gpu][agreement][normalization]") {
+    // The noise model has to undo Phase A's normalisation before its Poisson
+    // term, and that correction is written out THREE times -- pixel_selector,
+    // gpu_cpu_fallback and select_pixels.cl. The case above only ever runs it
+    // at the identity, where the expression collapses and any drift between
+    // the copies is invisible. This one gives every frame a different map, so
+    // the three have to agree on the real arithmetic.
+    auto ctx = GPUContext::create();
+    if (!ctx.is_gpu_available()) { SKIP("No GPU available"); }
+
+    int B = 100, C = 3, N = 30;
+    std::mt19937 rng(77);
+    auto fs = make_frame_stats(N);
+    WeightConfig wc;
+
+    // A spread of maps well outside the identity, including scales either
+    // side of 1 and offsets of both signs.
+    for (int f = 0; f < N; f++) {
+        for (int ch = 0; ch < C; ch++) {
+            fs[f].norm_scale[ch]  = 0.60f + 0.05f * float((f * 3 + ch) % 17);
+            fs[f].norm_offset[ch] = -0.02f + 0.004f * float((f + ch) % 11);
+        }
+        fs[f].has_noise_keywords = true;   // the branch under test
+    }
+
+    ShadowBuffers cpu_buf, gpu_buf;
+    cpu_buf.allocate(B, C, N);
+    gpu_buf.allocate(B, C, N);
+    fill_synthetic(cpu_buf, B, C, N, rng);
+    rng.seed(77);
+    fill_synthetic(gpu_buf, B, C, N, rng);
+
+    GPUCPUFallback::classify_weights(cpu_buf, fs.data(), wc, B, C, N);
+    GPUCPUFallback::classify_weights(gpu_buf, fs.data(), wc, B, C, N);
+    for (int ch = 0; ch < C; ch++)
+        for (int vi = 0; vi < B; vi++) {
+            float sig = cpu_buf.welford_mean[ch * B + vi];
+            cpu_buf.dist_true_signal[ch * B + vi] = sig;
+            gpu_buf.dist_true_signal[ch * B + vi] = sig;
+        }
+
+    GPUCPUFallback::select_pixels(cpu_buf, fs.data(), B, C, N);
+    GPUExecutor gpu_exec;
+    gpu_exec.execute_select_gpu(gpu_buf, fs.data(), B, C, N);
+
+    // RELATIVE, not absolute. These sigmas are around 1e-5, so the absolute
+    // GPU_TOL the case above uses cannot tell a correct kernel from one that
+    // has dropped the a^2 factor entirely -- verified by deleting it, which
+    // this assertion catches and an absolute one does not.
+    float max_rel = 0.0f;
+    double sum_noise = 0.0;
+    for (int ch = 0; ch < C; ch++)
+        for (int vi = 0; vi < B; vi++) {
+            const int idx = ch * B + vi;
+            const float a = cpu_buf.noise_sigma[idx], b = gpu_buf.noise_sigma[idx];
+            sum_noise += std::fabs(a);
+            const float denom = std::max(std::fabs(a), std::fabs(b));
+            if (denom > 0.0f)
+                max_rel = std::max(max_rel, std::fabs(a - b) / denom);
+        }
+    INFO("max relative noise diff " << max_rel
+         << ", mean |noise| " << sum_noise / (B * C));
+    // The branch must actually have run, or this proves nothing.
+    REQUIRE(sum_noise > 0.0);
+    REQUIRE(max_rel < 1e-4f);
+}
+
 TEST_CASE("GPU Agreement: spatial_context GPU == CPU", "[gpu][agreement]") {
     auto ctx = GPUContext::create();
     if (!ctx.is_gpu_available()) { SKIP("No GPU available"); }

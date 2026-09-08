@@ -25,6 +25,7 @@
 // TASK-14-COLLAPSE: same — for ChannelDecomposer pImpl.
 #include "nukex/calibration/channel_decomposer.hpp"
 #include "nukex/calibration/background_neutralization.hpp"
+#include "nukex/calibration/frame_normalization.hpp"
 #include <Eigen/Dense>
 #include "nukex/classify/weight_computer.hpp"
 // ColorComposer is module-owned (Task 11 / Task 12). The engine produces
@@ -296,6 +297,14 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // of Phase A on these corpora.
     int ref_index = 0;
     std::vector<FrameQuality> frame_quality(n_frames);
+
+    // Each frame's sky, one entry per image channel, tagged with the cube
+    // slot that channel feeds. Keyed by NAME rather than index because the
+    // slot union is not final until this pass completes. A frame the pass
+    // rejects contributes nothing here and later gets the identity, which is
+    // the honest answer for an exposure we could not measure.
+    std::vector<std::vector<std::pair<std::string, FrameSky>>>
+        frame_sky(n_frames);
     bool saw_bayer_frame = false;
     bool saw_mono_frame  = false;
     {
@@ -339,6 +348,25 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                 continue;
             }
 
+            // Sky, measured on exactly the image Phase A will accumulate:
+            // debayered and flat-corrected, before any warp mixes in the
+            // zeros the alignment leaves outside the source.
+            {
+                const ChannelConfig fcfg = ChannelConfig::from_filter(ff);
+                // from_filter may declare more slots than the frame has
+                // planes -- BROADBAND_OSC names R,G,B and a synthesized L for
+                // a 3-plane image. Only the planes that exist are measured;
+                // the synthesized slot inherits its inputs' correction.
+                const int nmeas = std::min<int>(img.n_channels(), fcfg.n_channels);
+                for (int c = 0; c < nmeas; ++c) {
+                    if (fcfg.channel_names[c].empty()) continue;
+                    frame_sky[f].emplace_back(
+                        fcfg.channel_names[c],
+                        measure_channel_sky(img.channel_data(c),
+                                            img.width(), img.height()));
+                }
+            }
+
             StarCatalog cat =
                 StarDetector::detect(img, config_.aligner_config.star_config);
             frame_quality[f].star_count  = static_cast<int>(cat.stars.size());
@@ -361,6 +389,68 @@ StackingEngine::ExecuteResult StackingEngine::execute(
 
         int chosen = select_reference_frame(frame_quality);
         ref_index = (chosen >= 0) ? chosen : 0;
+    }
+
+    // ─── Solve per-frame normalisation, one group per cube slot ──────────
+    //
+    // Per SLOT, not per batch. Measured on the user's own M27 2025 LRGB set
+    // the per-filter sky runs L 2934, R 3447, G 4050, B 5222 ADU -- a single
+    // batch-wide reference would scale L up 1.28x and B down 0.72x and
+    // flatten the colour. Within one filter the spread is real and is what
+    // this exists to remove: that set's B frames run 4383 to 12962 ADU.
+    //
+    // A frame the measuring pass rejected has no entry and keeps the
+    // identity. So does a slot whose frames all measured a zero scale.
+    std::vector<std::map<std::string, NormalizationCoefficients>>
+        frame_norm(n_frames);
+    if (config_.normalize_frames) {
+        // slot name -> the frames that feed it, in frame order.
+        std::map<std::string, std::vector<int>> group;
+        for (int f = 0; f < n_frames; ++f)
+            for (const auto& [name, sky] : frame_sky[f])
+                group[name].push_back(f);
+
+        int n_corrected = 0, n_total = 0;
+        for (const auto& [name, members] : group) {
+            n_total += static_cast<int>(members.size());
+            std::vector<FrameSky> skies;
+            skies.reserve(members.size());
+            for (int f : members)
+                for (const auto& [n2, sky] : frame_sky[f])
+                    if (n2 == name) { skies.push_back(sky); break; }
+
+            auto coeffs = solve_frame_normalization(skies);
+            if (!config_.normalize_scale) {
+                // Re-level only: keep each frame's own amplitude and move it
+                // onto the common sky level. v' = v + (ref_loc - loc_f),
+                // which is what the solved map degenerates to at scale 1.
+                for (std::size_t i = 0; i < coeffs.size(); ++i) {
+                    if (coeffs[i].scale == 1.0 && coeffs[i].offset == 0.0) continue;
+                    const double mapped_loc =
+                        coeffs[i].scale * skies[i].location + coeffs[i].offset;
+                    coeffs[i].scale  = 1.0;
+                    coeffs[i].offset = mapped_loc - skies[i].location;
+                }
+            }
+            for (std::size_t i = 0; i < members.size(); ++i) {
+                const auto& k = coeffs[i];
+                frame_norm[members[i]][name] = k;
+                // "Corrected" means the map actually moves a pixel. The
+                // identity is exact, so an equality test is the right one.
+                if (k.scale != 1.0 || k.offset != 0.0) n_corrected++;
+            }
+        }
+
+        if (n_corrected > 0) {
+            char msg[192];
+            std::snprintf(msg, sizeof(msg),
+                          "Sky normalisation: %d of %d frame-channels brought "
+                          "onto their slot's reference level",
+                          n_corrected, n_total);
+            obs.message(msg);
+        } else {
+            obs.message("Sky normalisation: session is stable, nothing to correct");
+        }
     }
 
     // The slot union is now final; everything downstream sizes against it.
@@ -723,6 +813,40 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             }
         }
 
+        // 4b. Frame median, taken BEFORE normalisation.
+        //
+        // It feeds cloud detection below, which compares this frame's level
+        // to the median of all frames' levels. Normalisation exists precisely
+        // to make those levels equal, so measuring afterwards would leave
+        // every frame looking clear and silently retire the cloud penalty.
+        // A cloudy frame is genuinely noisier even once rescaled, so it must
+        // still be recognisable as one.
+        float frame_median = compute_frame_median(aligned.image);
+
+        // 4c. Bring this frame onto its slots' common level and spread.
+        //
+        // After alignment, so saturation rejection and star detection all
+        // still see raw values and behave exactly as before; before caching,
+        // so the cache and the cube agree. The warp leaves zeros outside the
+        // source and the offset lifts those too, which is harmless: every
+        // consumer gates on the coverage mask, never on the value.
+        if (config_.normalize_frames && !frame_norm[f].empty()) {
+            const std::size_t npx =
+                static_cast<std::size_t>(aligned.image.width())
+              * aligned.image.height();
+            for (int c = 0; c < aligned.image.n_channels(); ++c) {
+                const std::string& slot = per_frame_cfg.channel_names[c];
+                if (slot.empty()) continue;
+                auto it = frame_norm[f].find(slot);
+                if (it == frame_norm[f].end()) continue;
+                const float a = static_cast<float>(it->second.scale);
+                const float b = static_cast<float>(it->second.offset);
+                if (a == 1.0f && b == 0.0f) continue;   // exact identity
+                float* d = aligned.image.channel_data(c);
+                for (std::size_t i = 0; i < npx; ++i) d[i] = a * d[i] + b;
+            }
+        }
+
         // 5. Cache aligned frame into the geometry-matched cache.
         obs.advance(0, "  caching");
         // A single-channel frame is routed by its slot, so each mono filter
@@ -739,7 +863,6 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                             routing_key).write_frame(aligned.image, f, aligned.coverage);
 
         // 6. Frame-level stats
-        float frame_median = compute_frame_median(aligned.image);
         float frame_fwhm = compute_median_fwhm(aligned.stars);
 
         frame_stats[f].read_noise = meta.read_noise;
@@ -751,6 +874,41 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         frame_stats[f].median_luminance = frame_median;
         frame_stats[f].fwhm = frame_fwhm;
         frame_fwhms[f] = frame_fwhm;
+
+        // Record what was applied, indexed by cube slot, for Phase B's noise
+        // model -- its Poisson term is only meaningful on raw ADU and it has
+        // no other way to recover it.
+        if (config_.normalize_frames) {
+            for (const auto& [slot, k] : frame_norm[f]) {
+                const int si = cube.channel_config.slot_index(slot);
+                if (si < 0 || si >= MAX_CHANNELS) continue;
+                frame_stats[f].norm_scale[si]  = static_cast<float>(k.scale);
+                frame_stats[f].norm_offset[si] = static_cast<float>(k.offset);
+            }
+            // A synthesized slot was never normalised directly -- it was
+            // built in the router below out of planes that already had been.
+            // Give the noise model the map that was effectively applied to
+            // it rather than the identity, which would understate the noise
+            // of every rescaled frame.
+            if (frame_filter.cls == FilterClass::BROADBAND_OSC) {
+                const int li = cube.channel_config.slot_index("L");
+                const int ri = cube.channel_config.slot_index("R");
+                const int gi = cube.channel_config.slot_index("G");
+                const int bi = cube.channel_config.slot_index("B");
+                if (li >= 0 && ri >= 0 && gi >= 0 && bi >= 0) {
+                    const NormalizationCoefficients in[3] = {
+                        {frame_stats[f].norm_scale[ri], frame_stats[f].norm_offset[ri]},
+                        {frame_stats[f].norm_scale[gi], frame_stats[f].norm_offset[gi]},
+                        {frame_stats[f].norm_scale[bi], frame_stats[f].norm_offset[bi]},
+                    };
+                    // The same rec709 weights the router mixes L with.
+                    const double w[3] = {0.299, 0.587, 0.114};
+                    const auto m = mix_coefficients(in, w, 3);
+                    frame_stats[f].norm_scale[li]  = static_cast<float>(m.scale);
+                    frame_stats[f].norm_offset[li] = static_cast<float>(m.offset);
+                }
+            }
+        }
 
         if (aligned.alignment.alignment_failed) {
             // Real alignment failure: the Groth triangle matcher ran but

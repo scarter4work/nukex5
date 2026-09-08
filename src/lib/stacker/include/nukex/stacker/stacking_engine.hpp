@@ -71,6 +71,44 @@ public:
         // so no shipped table can enumerate them. Empty = none.
         std::string           filter_alias_path;
         GPUExecutorConfig     gpu_config;
+
+        /// Bring every frame onto a common sky level and spread before it is
+        /// accumulated (v' = scale*v + offset, solved per cube slot).
+        ///
+        /// Sky level and transparency vary across a session and NukeX used to
+        /// do nothing about it, so the per-voxel fit met a bimodal population
+        /// and modelled a per-FRAME effect per-PIXEL. Measured across five
+        /// real corpora that cost 1.00x to 5.19x the pixel-scale noise of a
+        /// plain robust estimator on identical inputs.
+        ///
+        /// A stable session is an exact no-op, so this is on by default. It
+        /// exists as a switch so the effect can be measured single-variable
+        /// against a golden, which is how it was validated.
+        bool                  normalize_frames = true;
+
+        /// Whether normalisation may rescale a frame, or only re-level it.
+        ///
+        /// OFF by default, on measurement. The additive half removes the
+        /// sky-level differences the per-voxel fit was mistaking for
+        /// per-pixel bimodality and cannot change a frame's signal amplitude.
+        /// The multiplicative half equalises NOISE scale, and on real data it
+        /// has never beaten re-levelling alone:
+        ///
+        ///     M27 2025 B, 24f   off 0.00026157  +scale 0.00026165  offset 0.00024208
+        ///     NGC7635,    65f   off 0.00099188  +scale 0.00023512  offset 0.00023288
+        ///
+        /// The reason is physical. Matching noise scale is a TRANSPARENCY
+        /// correction, and it is only right when a frame's noise rose because
+        /// its signal fell with it. On these sessions the sky rose from added
+        /// skyglow instead -- d log(scale)/d log(sky) measures 0.53, and
+        /// photon noise is 0.5 -- so the signal did not change and scaling it
+        /// down is simply wrong. On the B frames it widened the star-flux
+        /// spread from 0.090-1.119x of the median to 0.056-1.399x.
+        ///
+        /// Kept available rather than deleted: a session whose scale really
+        /// does track transparency (the exponent near 1.0 rather than 0.5)
+        /// is the case this was designed for.
+        bool                  normalize_scale  = false;
     };
 
     explicit StackingEngine(const Config& config);

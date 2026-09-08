@@ -256,6 +256,11 @@ void GPUExecutor::execute_select_gpu(
     // frame in different channels. buf.global_frame_of carries that map.
     std::vector<float> frame_read_noise(C * N, 0.0f), frame_gain(C * N, 1.0f);
     std::vector<uint8_t> frame_has_noise(C * N, 0);
+    // Phase A's normalisation, staged the same way: the kernel undoes it
+    // before the Poisson term. Neutral (1, 0) where a channel has no frame
+    // at that slot, which is also the identity the kernel reduces to exactly.
+    std::vector<float> frame_norm_scale(C * N, 1.0f),
+                       frame_norm_offset(C * N, 0.0f);
     for (int ch = 0; ch < C; ch++) {
         for (int fi = 0; fi < N; fi++) {
             const int idx = ch * N + fi;
@@ -265,6 +270,8 @@ void GPUExecutor::execute_select_gpu(
             frame_read_noise[idx] = fs[gf].read_noise;
             frame_gain[idx]       = fs[gf].gain;
             frame_has_noise[idx]  = fs[gf].has_noise_keywords ? 1 : 0;
+            frame_norm_scale[idx]  = fs[gf].norm_scale[ch];
+            frame_norm_offset[idx] = fs[gf].norm_offset[ch];
         }
     }
 
@@ -283,6 +290,10 @@ void GPUExecutor::execute_select_gpu(
         C * N * sizeof(float), frame_gain.data());
     cl_mem d_has_noise = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
         C * N * sizeof(uint8_t), frame_has_noise.data());
+    cl_mem d_norm_scale = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+        C * N * sizeof(float), frame_norm_scale.data());
+    cl_mem d_norm_offset = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+        C * N * sizeof(float), frame_norm_offset.data());
     cl_mem d_welford_M2 = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
         C * B * sizeof(float), buf.welford_M2.data());
     cl_mem d_welford_n = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
@@ -301,6 +312,8 @@ void GPUExecutor::execute_select_gpu(
     clSetKernelArg(k, arg++, sizeof(cl_mem), &d_read_noise);
     clSetKernelArg(k, arg++, sizeof(cl_mem), &d_gain);
     clSetKernelArg(k, arg++, sizeof(cl_mem), &d_has_noise);
+    clSetKernelArg(k, arg++, sizeof(cl_mem), &d_norm_scale);
+    clSetKernelArg(k, arg++, sizeof(cl_mem), &d_norm_offset);
     clSetKernelArg(k, arg++, sizeof(cl_mem), &d_welford_M2);
     clSetKernelArg(k, arg++, sizeof(cl_mem), &d_welford_n);
     clSetKernelArg(k, arg++, sizeof(int), &C);
@@ -325,6 +338,8 @@ void GPUExecutor::execute_select_gpu(
     clReleaseMemObject(d_read_noise);
     clReleaseMemObject(d_gain);
     clReleaseMemObject(d_has_noise);
+    clReleaseMemObject(d_norm_scale);
+    clReleaseMemObject(d_norm_offset);
     clReleaseMemObject(d_welford_M2);
     clReleaseMemObject(d_welford_n);
     clReleaseMemObject(d_output);

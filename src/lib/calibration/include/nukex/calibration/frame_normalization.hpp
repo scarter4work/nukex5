@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Scott Carter. MIT License.
 #pragma once
 
+#include <cstddef>
 #include <vector>
 
 namespace nukex {
@@ -40,5 +41,49 @@ struct NormalizationCoefficients {
 /// -- normalising on a scale of zero would be division by noise.
 std::vector<NormalizationCoefficients>
 solve_frame_normalization(const std::vector<FrameSky>& frames);
+
+/// Measure one channel's sky: median location, and a GRADIENT-BLIND scale.
+///
+/// Median rather than mean because a light frame is sky plus a bright
+/// minority. A mean-and-sigma estimator reads the stars as the level, so the
+/// batch would end up normalised on how many stars each frame happens to
+/// show -- on the seeing -- instead of on its sky.
+///
+/// The scale is the MAD of horizontal nearest-neighbour DIFFERENCES over
+/// background pixels, / sqrt(2), not the MAD about the median. That
+/// distinction decides whether this works at all. `scale` is what the solver
+/// divides by, so it has to be noise; MAD about the median cannot separate
+/// noise from structure, and on the user's own M27 2025 B frames the seven
+/// clouded exposures reported 375-1159 where their actual pixel noise was
+/// 120-169. Normalising on that crushed them by a factor of eight and made
+/// the stack measurably worse: pixel noise rose 8%. The tell is the exponent
+/// -- d log(MAD)/d log(sky) came out 2.31, which no photon noise can do; the
+/// difference-based estimator gives 0.95.
+///
+/// Non-finite samples are dropped rather than propagated: a NaN reaching
+/// nth_element poisons the ordering, and flats divide, so NaN and Inf are
+/// both reachable from a bad calibration frame. A channel with no finite
+/// samples comes back `usable == false`.
+///
+/// A genuinely flat channel reports scale 0, which is what
+/// solve_frame_normalization reads as "hand this frame the identity". That
+/// must not be fudged to an epsilon -- doing so turns "could not measure"
+/// into "divide by noise".
+FrameSky measure_channel_sky(const float* data, int width, int height);
+
+/// The effective map for a slot SYNTHESIZED from already-normalised planes.
+///
+/// OSC's L slot is 0.299R + 0.587G + 0.114B, and Phase A builds it from
+/// planes that have already been corrected -- so it must not be corrected a
+/// second time. Phase B's noise model still needs to know what map was
+/// effectively applied, to convert a sample back to the raw ADU its Poisson
+/// term assumes.
+///
+/// Exact when the input planes share one correction, which is the common
+/// case; a weighted mixture otherwise, because a mixture of differing affine
+/// maps is not itself an affine map of the unmixed value. The residual is
+/// second order and confined to the noise estimate, never to a pixel.
+NormalizationCoefficients
+mix_coefficients(const NormalizationCoefficients* c, const double* w, int n);
 
 } // namespace nukex

@@ -16,6 +16,10 @@ __kernel void select_pixels(
     __global const float*   frame_read_noise,   // [C * N]
     __global const float*   frame_gain,         // [C * N]
     __global const uchar*   frame_has_noise_kw, // [C * N]
+    // Phase A's per-frame normalisation, per CHANNEL, so the Poisson term
+    // below can be evaluated on the raw value it is only meaningful for.
+    __global const float*   frame_norm_scale,   // [C * N]
+    __global const float*   frame_norm_offset,  // [C * N]
     // Welford variance for fallback
     __global const float*   welford_M2,         // [C * B]
     __global const uint*    welford_n,          // [C * B]
@@ -59,10 +63,19 @@ __kernel void select_pixels(
         if (frame_has_noise_kw[ch * N + fi]) {
             float g = max(frame_gain[ch * N + fi], 1.0e-10f);
             float rn = frame_read_noise[ch * N + fi];
-            float value_adu = value * 65535.0f;
+            // Undo Phase A's normalisation before the Poisson term: shot
+            // noise belongs to the photons actually collected, so evaluate
+            // it on the raw value and carry it back through
+            // Var(a*x + b) = a^2 Var(x). At the identity (1, 0) this is
+            // bit-for-bit the un-normalised expression, so an uncorrected
+            // batch cannot move. Must match gpu_cpu_fallback.cpp exactly.
+            float a = frame_norm_scale[ch * N + fi];
+            float b = frame_norm_offset[ch * N + fi];
+            if (!(a > 0.0f)) { a = 1.0f; b = 0.0f; }
+            float value_adu = ((value - b) / a) * 65535.0f;
             float shot_var = value_adu / g;
             float read_var = (rn * rn) / (g * g);
-            sigma2 = (shot_var + read_var) / (65535.0f * 65535.0f);
+            sigma2 = a * a * (shot_var + read_var) / (65535.0f * 65535.0f);
         } else {
             sigma2 = welford_var;
         }
