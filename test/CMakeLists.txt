@@ -120,6 +120,7 @@ nukex_add_test(test_gpu_context unit/gpu/test_gpu_context.cpp nukex4_gpu)
 nukex_add_test(test_gpu_cpu_fallback unit/gpu/test_gpu_cpu_fallback.cpp nukex4_gpu nukex4_stacker)
 nukex_add_test(test_gpu_kernels unit/gpu/test_gpu_kernels.cpp nukex4_gpu)
 nukex_add_test(test_gpu_agreement unit/gpu/test_gpu_agreement.cpp nukex4_gpu nukex4_stacker)
+nukex_add_test(test_shadow_buffers unit/gpu/test_shadow_buffers.cpp nukex4_gpu nukex4_stacker)
 nukex_add_test(test_fit_heartbeat unit/gpu/test_fit_heartbeat.cpp nukex4_gpu)
 
 # Module-layer tests (auto-selector, stretch factory, Phase 8 fallback)

@@ -71,63 +71,107 @@ void ShadowBuffers::extract_from_cube(
     map_frames(slot_refs, C);
     pixel_valid.assign((static_cast<std::size_t>(C) * N * B + 7) / 8, 0);
 
+    // The cube's per-voxel statistics are indexed by voxel; the cache is read
+    // by frame-row. Two loops rather than one, because interleaving them would
+    // put the cache back on a per-pixel access pattern.
     for (int vi = 0; vi < B; vi++) {
         int voxel_idx = start_voxel + vi;
         int px = voxel_idx % w;
         int py = voxel_idx / w;
         const auto& voxel = cube.at(px, py);
-
         for (int ch = 0; ch < C; ch++) {
             welford_mean[ch * B + vi] = voxel.channel(ch).welford.mean;
             welford_M2[ch * B + vi]   = voxel.channel(ch).welford.M2;
             welford_n[ch * B + vi]    = voxel.channel(ch).welford.n;
+        }
+    }
 
-            // Route per-frame pixel values through the slot ref.
-            // ref.cache == nullptr means no per-frame source for this slot
-            // (e.g. an unmapped synthesised slot in a degenerate config).
-            // pixel_values was zeroed by allocate() so no fill needed here —
-            // just skip; distribution fitting will use welford-only stats.
-            if (ch >= static_cast<int>(slot_refs.size())) continue;
-            const ChannelCacheRef& ref = slot_refs[ch];
-            if (ref.cache == nullptr) continue;
+    // Scratch for one frame-row of one channel. Sized by the BATCH, not by
+    // the frame count, so this costs a few bytes per voxel however deep the
+    // stack is -- which is what keeps it inside the host-RAM budget
+    // estimate_batch_size was tuned to.
+    std::vector<float>        row(static_cast<std::size_t>(B));
+    std::vector<std::uint8_t> row_ok(static_cast<std::size_t>(B));
+    std::vector<float>        g_row, b_row;
+    std::vector<std::uint8_t> g_ok, b_ok;
 
-            float frame_vals[GPU_MAX_FRAMES];
-            int nf_read = 0;
+    for (int ch = 0; ch < C; ch++) {
+        // ref.cache == nullptr means no per-frame source for this slot (e.g.
+        // an unmapped synthesised slot in a degenerate config). pixel_values
+        // was zeroed by allocate(), so leaving it is correct -- distribution
+        // fitting falls back to welford-only stats.
+        if (ch >= static_cast<int>(slot_refs.size())) continue;
+        const ChannelCacheRef& ref = slot_refs[ch];
+        if (ref.cache == nullptr) continue;
 
-            std::uint8_t frame_ok[GPU_MAX_FRAMES] = {0};
+        // The channel's OWN frame count, not the voxel's. They differ whenever
+        // two slots read different caches.
+        const int n_ch = std::min(ref.cache->n_frames_written(), N);
 
+        if (ref.kind == SlotSynthesis::REC709_LUMA) {
+            g_row.resize(B); b_row.resize(B);
+            g_ok.resize(B);  b_ok.resize(B);
+        }
+
+        for (int fi = 0; fi < n_ch; fi++) {
             if (ref.kind == SlotSynthesis::DIRECT) {
-                nf_read = ref.cache->read_pixel(px, py, ref.cache_ch,
-                                                frame_vals, frame_ok);
+                // A false return here is currently unreachable: n_ch above is
+                // min(ref.cache->n_frames_written(), N), which is exactly what
+                // read_frame_range gates its refusal on. It would be harmless
+                // even if it did trip -- `continue` skips the memcpy and
+                // set_sample_valid below, so the sample's valid bit stays at
+                // the 0 pixel_valid was assigned to, and both Phase B
+                // consumers gate on that bit.
+                if (!ref.cache->read_frame_range(fi, start_voxel, B,
+                                                 ref.cache_ch,
+                                                 row.data(), row_ok.data()))
+                    continue;
 
             } else if (ref.kind == SlotSynthesis::REC709_LUMA) {
-                // Synthesise L per-frame from cached R, G, B channels.
-                // Matches Phase A's per-pixel: l = 0.299R + 0.587G + 0.114B.
-                float r_vals[GPU_MAX_FRAMES], g_vals[GPU_MAX_FRAMES], b_vals[GPU_MAX_FRAMES];
-                std::uint8_t r_ok[GPU_MAX_FRAMES], g_ok[GPU_MAX_FRAMES], b_ok[GPU_MAX_FRAMES];
-                int n_r = ref.cache->read_pixel(px, py, 0, r_vals, r_ok);
-                int n_g = ref.cache->read_pixel(px, py, 1, g_vals, g_ok);
-                int n_b = ref.cache->read_pixel(px, py, 2, b_vals, b_ok);
-                nf_read = std::min({n_r, n_g, n_b});
-                for (int fi = 0; fi < nf_read; ++fi) {
-                    frame_vals[fi] = 0.299f * r_vals[fi]
-                                   + 0.587f * g_vals[fi]
-                                   + 0.114f * b_vals[fi];
+                // Synthesise L per-frame from cached R, G, B. Same formula as
+                // Phase A's per-pixel accumulation, which is what keeps the
+                // distribution fitting consistent with the Welford stats.
+                //
+                // Same unreachable-but-harmless refusal as the DIRECT branch
+                // above, for each of these three reads.
+                if (!ref.cache->read_frame_range(fi, start_voxel, B, 0,
+                                                 row.data(), row_ok.data()))
+                    continue;
+                if (!ref.cache->read_frame_range(fi, start_voxel, B, 1,
+                                                 g_row.data(), g_ok.data()))
+                    continue;
+                if (!ref.cache->read_frame_range(fi, start_voxel, B, 2,
+                                                 b_row.data(), b_ok.data()))
+                    continue;
+                for (int vi = 0; vi < B; ++vi) {
+                    row[vi] = 0.299f * row[vi]
+                            + 0.587f * g_row[vi]
+                            + 0.114f * b_row[vi];
                     // Synthetic luminance mixes all three planes, so it is a
                     // measurement only where all three are.
-                    frame_ok[fi] = (r_ok[fi] && g_ok[fi] && b_ok[fi]) ? 1 : 0;
+                    row_ok[vi] = (row_ok[vi] && g_ok[vi] && b_ok[vi]) ? 1 : 0;
                 }
+            } else {
+                // Defends against a future SlotSynthesis enumerator falling
+                // through unhandled. Without this, `row`/`row_ok` would still
+                // hold whatever the PREVIOUS (channel, frame) iteration left
+                // in them, and the memcpy and set_sample_valid below would
+                // copy that stale row into `dst` and mark it valid --
+                // silently fitting a distribution to another channel's
+                // pixels. Write nothing instead.
+                continue;
             }
 
-            // The channel's own frame count, not the voxel's. They differ
-            // whenever two slots read different caches.
-            int n_copy = std::min(nf_read, N);
-            for (int fi = 0; fi < n_copy; fi++) {
-                pixel_values[ch * N * B + fi * B + vi] = frame_vals[fi];
-                set_sample_valid(ch, fi, vi, frame_ok[fi] != 0, B);
-            }
-            n_frames[ch * B + vi] = static_cast<uint16_t>(n_copy);
+            float* dst = pixel_values.data()
+                       + static_cast<std::size_t>(ch) * N * B
+                       + static_cast<std::size_t>(fi) * B;
+            std::memcpy(dst, row.data(), static_cast<std::size_t>(B) * sizeof(float));
+            for (int vi = 0; vi < B; ++vi)
+                set_sample_valid(ch, fi, vi, row_ok[vi] != 0, B);
         }
+
+        for (int vi = 0; vi < B; ++vi)
+            n_frames[ch * B + vi] = static_cast<uint16_t>(n_ch);
     }
 }
 
