@@ -24,5 +24,10 @@ public:
     /// like from outside. Returns 0 when nothing is comparable.
     static double measured_vs_predicted_ratio(const Image& measured,
                                               const Image& predicted);
+
+    /// Median PREDICTED noise expressed as the luminance equivalent, so it is
+    /// directly comparable with the measured map and with the ratio above.
+    /// Channel 0's median is NOT interchangeable with this on a colour stack.
+    static double predicted_luminance_median(const Image& predicted);
 };
 } // namespace nukex

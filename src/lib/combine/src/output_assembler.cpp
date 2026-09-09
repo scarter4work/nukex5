@@ -88,4 +88,29 @@ double OutputAssembler::measured_vs_predicted_ratio(const Image& measured,
     return med;
 }
 
+double OutputAssembler::predicted_luminance_median(const Image& predicted) {
+    if (predicted.empty()) return 0.0;
+    const int nc = predicted.n_channels();
+    std::vector<double> vals;
+    vals.reserve(static_cast<std::size_t>(predicted.width()) * predicted.height());
+    for (int y = 0; y < predicted.height(); y++) {
+        for (int x = 0; x < predicted.width(); x++) {
+            double p;
+            if (nc >= 3) {
+                const double wr = 0.2126 * predicted.at(x, y, 0);
+                const double wg = 0.7152 * predicted.at(x, y, 1);
+                const double wb = 0.0722 * predicted.at(x, y, 2);
+                p = std::sqrt(wr * wr + wg * wg + wb * wb);
+            } else {
+                p = predicted.at(x, y, 0);
+            }
+            if (p > 0.0 && std::isfinite(p)) vals.push_back(p);
+        }
+    }
+    if (vals.empty()) return 0.0;
+    const std::size_t mid = vals.size() / 2;
+    std::nth_element(vals.begin(), vals.begin() + mid, vals.end());
+    return vals[mid];
+}
+
 } // namespace nukex

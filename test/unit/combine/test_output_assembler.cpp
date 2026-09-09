@@ -111,3 +111,40 @@ TEST_CASE("OutputAssembler: ratio combines colour channels in quadrature",
     REQUIRE(OutputAssembler::measured_vs_predicted_ratio(measured, predicted)
             == Catch::Approx(1.0).epsilon(1e-3));
 }
+
+// The console prints measured, predicted and their ratio. Those three numbers
+// have to reconcile, or the instrument teaches the reader to distrust it. The
+// ratio combines colour channels in quadrature to a luminance equivalent, so
+// the printed "predicted" must be computed the same way -- printing channel
+// 0's median instead makes a 1.05x read as 1.28x on a colour stack.
+
+TEST_CASE("OutputAssembler: predicted luminance median matches the ratio's basis",
+          "[assembler]") {
+    Image predicted(8, 8, 3);
+    predicted.fill(1.0f);
+    // sqrt((0.2126)^2 + (0.7152)^2 + (0.0722)^2) = 0.74961
+    REQUIRE(OutputAssembler::predicted_luminance_median(predicted)
+            == Catch::Approx(0.74961).epsilon(1e-3));
+}
+
+TEST_CASE("OutputAssembler: predicted luminance median is the plain median on mono",
+          "[assembler]") {
+    Image predicted(8, 8, 1);
+    predicted.fill(0.02f);
+    REQUIRE(OutputAssembler::predicted_luminance_median(predicted)
+            == Catch::Approx(0.02).epsilon(1e-4));
+}
+
+TEST_CASE("OutputAssembler: printed predicted and ratio agree on a colour stack",
+          "[assembler]") {
+    // The regression this exists to catch: measured / printed-predicted must
+    // equal the reported ratio on a 3-channel image.
+    Image predicted(8, 8, 3);
+    predicted.fill(1.0f);
+    Image measured(8, 8, 1);
+    measured.fill(1.5f * 0.74961f);
+    const double ratio = OutputAssembler::measured_vs_predicted_ratio(measured, predicted);
+    const double printed_p = OutputAssembler::predicted_luminance_median(predicted);
+    REQUIRE(ratio == Catch::Approx(1.5).epsilon(1e-3));
+    REQUIRE(1.5f * 0.74961f / printed_p == Catch::Approx(ratio).epsilon(1e-3));
+}

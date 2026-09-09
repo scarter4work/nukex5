@@ -1619,25 +1619,25 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             // FITS gain keywords that are not always what they claim to be.
             double sm = 0.0, sp = 0.0;
             {
-                std::vector<float> mv, pv;
-                mv.reserve(1024); pv.reserve(1024);
+                std::vector<float> mv;
+                mv.reserve(1024);
                 for (int y = 0; y < measured_noise.height(); ++y)
                     for (int x = 0; x < measured_noise.width(); ++x) {
                         const float m = measured_noise.at(x, y, 0);
                         if (m > 0.0f) mv.push_back(m);
                     }
-                for (int y = 0; y < noise_map.height(); ++y)
-                    for (int x = 0; x < noise_map.width(); ++x) {
-                        const float v = noise_map.at(x, y, 0);
-                        if (v > 0.0f) pv.push_back(v);
-                    }
+
                 auto med = [](std::vector<float>& v) -> double {
                     if (v.empty()) return 0.0;
                     std::size_t k = v.size() / 2;
                     std::nth_element(v.begin(), v.begin() + k, v.end());
                     return v[k];
                 };
-                sm = med(mv); sp = med(pv);
+                sm = med(mv);
+                // Must use the SAME luminance combination the ratio uses.
+                // Channel 0's median is a different quantity on a colour
+                // stack, and printing it made a 1.05x read as 1.28x.
+                sp = OutputAssembler::predicted_luminance_median(noise_map);
             }
             char msg[256];
             std::snprintf(msg, sizeof(msg),
