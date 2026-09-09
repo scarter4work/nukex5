@@ -51,10 +51,11 @@ public:
     /// pixel read here is indexed locally.
     ///
     /// Local slots are dense by construction. They used to be the global
-    /// index, which made read_pixel's contiguous read wrong for any cache
-    /// that received a subset of the batch: a cache given frames 5, 9 and 12
-    /// of twenty reported thirteen frames and handed Phase B ten unwritten
-    /// slots as though they were measurements.
+    /// index, which made that count wrong for any cache that received a
+    /// subset of the batch: a cache given frames 5, 9 and 12 of twenty
+    /// reported n_frames_written() == 13, and Phase B trusts that count to
+    /// bound which local slots read_frame_range treats as written -- it
+    /// would have read ten unwritten slots as though they were measurements.
     /// `coverage` says which pixels of `aligned` actually carry source data.
     /// An empty mask means the frame was cloned rather than warped and covers
     /// itself completely.

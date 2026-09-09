@@ -115,6 +115,13 @@ void ShadowBuffers::extract_from_cube(
 
         for (int fi = 0; fi < n_ch; fi++) {
             if (ref.kind == SlotSynthesis::DIRECT) {
+                // A false return here is currently unreachable: n_ch above is
+                // min(ref.cache->n_frames_written(), N), which is exactly what
+                // read_frame_range gates its refusal on. It would be harmless
+                // even if it did trip -- `continue` skips the memcpy and
+                // set_sample_valid below, so the sample's valid bit stays at
+                // the 0 pixel_valid was assigned to, and both Phase B
+                // consumers gate on that bit.
                 if (!ref.cache->read_frame_range(fi, start_voxel, B,
                                                  ref.cache_ch,
                                                  row.data(), row_ok.data()))
@@ -124,6 +131,9 @@ void ShadowBuffers::extract_from_cube(
                 // Synthesise L per-frame from cached R, G, B. Same formula as
                 // Phase A's per-pixel accumulation, which is what keeps the
                 // distribution fitting consistent with the Welford stats.
+                //
+                // Same unreachable-but-harmless refusal as the DIRECT branch
+                // above, for each of these three reads.
                 if (!ref.cache->read_frame_range(fi, start_voxel, B, 0,
                                                  row.data(), row_ok.data()))
                     continue;
@@ -141,6 +151,15 @@ void ShadowBuffers::extract_from_cube(
                     // measurement only where all three are.
                     row_ok[vi] = (row_ok[vi] && g_ok[vi] && b_ok[vi]) ? 1 : 0;
                 }
+            } else {
+                // Defends against a future SlotSynthesis enumerator falling
+                // through unhandled. Without this, `row`/`row_ok` would still
+                // hold whatever the PREVIOUS (channel, frame) iteration left
+                // in them, and the memcpy and set_sample_valid below would
+                // copy that stale row into `dst` and mark it valid --
+                // silently fitting a distribution to another channel's
+                // pixels. Write nothing instead.
+                continue;
             }
 
             float* dst = pixel_values.data()

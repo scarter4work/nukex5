@@ -79,11 +79,16 @@ with `smaps_rollup` before drawing a conclusion.
 
 ## 3. Done, and measured
 
-### 3a. Periodic writeback (implemented)
+### 3a. Periodic writeback (implemented, superseded by 3c)
 
-`write_frame` now schedules writeback every 8th frame instead of every frame,
-with an explicit `flush()` at the end of Phase A so the dirty-page bound that
-prevented the 2026-09-05 OOM is kept.
+On the pixel-major layout, `write_frame` scheduled writeback every 8th frame
+instead of every frame, with an explicit `flush()` at the end of Phase A so
+the dirty-page bound that prevented the 2026-09-05 OOM was kept. It was the
+right fix for that layout — batching the `msync` calls was the only lever
+available without changing the layout itself — and the result is what made
+the layout's cost visible: batching 8x only bought 2x, which is what showed
+that most of the 26x amplification was coming from the layout, not from
+`msync` frequency.
 
 ```
 write volume   1,704 MB/frame -> 870 MB/frame     (2.0x)
@@ -93,6 +98,11 @@ first 40 frames   145.7 s     -> 100.5 s          (1.45x)
 Only 2x rather than 8x, because the kernel's own `dirty_background_ratio`
 forces writeback once ~3 GB is dirty regardless of `msync`. The rest of the
 amplification is structural — see 4a.
+
+Superseded by 3c: once the layout became frame-major, batching writeback
+every 8th frame over the whole mapping stopped being the right shape.
+Writeback there is per-frame, over only that frame's own bytes — see 3c for
+what replaced this and its measurements.
 
 ### 3b. Bounded GPU staging budget (implemented)
 
@@ -136,6 +146,12 @@ for the three corpora with enough volume to read:
 | M27-2023 33f OSC | 2165.6 | 78.0 | 27.76x |
 | M16 12f dual-NB | 492.3 | 65.9 | 7.47x |
 | M27-2025 72f mono | 142.0 | 8.8 | 16.17x |
+
+(MB/frame columns above are rounded for display; each reduction ratio is
+computed from the unrounded per-sample deltas, so dividing the displayed
+columns can disagree with the stated ratio in the last digit — e.g.
+142.0 / 8.8 reads as 16.14x against the stated 16.17x. The ratios as stated
+are correct.)
 
 The four NGC7635 runs moved between 5.6 and 26.6 MB/frame in both directions
 (0.55x-4.21x). `/proc/diskstats` is system-wide, and at that size the reading
