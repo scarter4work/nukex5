@@ -4,7 +4,7 @@
 
 ### New
 
-- **NukeX now flattens the sky gradient in your stacked image.**
+- **NukeX now removes the sky *tilt* from your stacked image.**
   Almost every stack has a slow brightness ramp across the frame — light
   pollution from one direction, optics, or an imperfect flat. NukeX had no
   answer for it at all. It now measures that ramp and removes it, and tells you
@@ -25,8 +25,19 @@
     than sky, so the fit deliberately ignores anything sitting above the
     background rather than letting it tilt the result.
 
-  The overall sky *level* is left exactly where it was — only the unevenness
-  goes. Your stretch behaves as before.
+  The overall sky *level* is left exactly where it was — only the tilt goes.
+  Your stretch behaves as before.
+
+  **What this does not do.** Measured on the NGC7635 stack afterwards, a plane
+  accounts for only about 1.5x the image's noise of what remains, while a
+  curved surface would account for roughly 16x. In other words the larger part
+  of that field's background is a dome — vignetting, an imperfect flat, or
+  genuinely extended sky — and a flat correction cannot touch it. Removing a
+  dome safely means first being able to tell faint sky from the faint outskirts
+  of your object, which NukeX cannot yet do. Until it can, taking the curve out
+  automatically would risk subtracting the very nebulosity you imaged for. If
+  your data needs that, do it deliberately in PixInsight where you can see what
+  is being removed.
 
   If you would rather do this yourself in PixInsight, the behaviour is
   controlled by `remove_sky_gradient`.
