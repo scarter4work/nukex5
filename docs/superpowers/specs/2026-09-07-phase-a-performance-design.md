@@ -1,6 +1,6 @@
 # Phase A performance: storage layout and threading
 
-**Status:** design, for review. Two of the changes are already implemented and
+**Status:** design, for review. Three of the changes are already implemented and
 measured; the rest are proposals.
 
 **Measured on:** a 156-frame M63 batch (114 x 120 s + 42 x 300 s, 3840x2160
@@ -37,16 +37,16 @@ And the per-frame cost is not constant: **3.85 s at frame 1, 13.4 s at frame
 
 ## 2. Root cause: 26x write amplification
 
-`FrameCache::write_frame` writes through an mmap whose layout is **pixel-major**:
+`FrameCache::write_frame` wrote through an mmap whose layout was **pixel-major**:
 
 ```
 offset(x, y, ch, f) = ((y*W + x)*n_ch + ch) * max_frames + f
 ```
 
-Consecutive writes for one frame are `max_frames` elements apart — 312 bytes
-at 156 frames — so **writing one frame touches every page of the mapping.**
-The mapping is `W*H*n_ch*max_frames*2` = 10.4 GB here, while the frame's own
-data is 66 MB.
+Consecutive writes for one frame were `max_frames` elements apart — 312 bytes
+at 156 frames — so **writing one frame touched every page of the mapping.**
+The mapping was `W*H*n_ch*max_frames*2` = 10.4 GB here, while the frame's own
+data was 66 MB.
 
 It then called `msync(mapped_, mapped_size_, MS_ASYNC)` over the **whole
 mapping, after every frame**, forcing the entire file back to disk per frame.
@@ -58,8 +58,8 @@ Measured directly from `/proc/diskstats` during Phase A:
 ```
 
 for 66 MB of actual data. **26x write amplification**, saturating the NVMe.
-That is the degradation: as the cache fills, more of the mapping is resident
-and dirty, so each forced writeback costs more.
+That was the degradation: as the cache filled, more of the mapping was
+resident and dirty, so each forced writeback cost more.
 
 ### What was NOT the cause
 
@@ -107,9 +107,71 @@ batch splits in `test_gpu_cpu_fallback` — so a smaller batch buys more kernel
 launches and costs nothing else. This did not move the Phase A numbers above
 (staging is allocated in Phase B); it removes a second way to exhaust the box.
 
+### 3c. Frame-major layout (implemented)
+
+`offset(x, y, ch, f) = f*(W*H*n_ch) + (y*W+x)*n_ch + ch`. Phase B reads by
+frame-row (`FrameCache::read_frame_range`) instead of gathering one pixel
+across all frames; `read_pixel` is gone. Writeback narrowed to the frame just
+written, replacing the 8-frame batching from 3a that the old layout forced.
+
+Measured on the four-corpus E2E manifest (BEFORE = main 338d6ab, pixel-major;
+AFTER = this branch, frame-major; same machine, back to back, nothing else
+changed):
+
+Phase A wall time:
+
+| corpus | BEFORE | AFTER | speedup |
+|---|---|---|---|
+| NGC7635 65f mono (4 runs) | 37.4-38.7 s | 36.3-36.6 s | ~1.03x |
+| M27-2023 33f OSC | 122.4 s | 69.8 s | 1.75x |
+| M16 12f dual-NB | 59.2 s | 53.9 s | 1.10x |
+| M27-2025 72f mono | 68.3 s | 50.4 s | 1.36x |
+| **total** | **401.3 s** | **320.0 s** | **1.25x** |
+
+Bytes written to the NVMe during Phase A (`/proc/diskstats`, 5 s sampling),
+for the three corpora with enough volume to read:
+
+| corpus | BEFORE MB/frame | AFTER MB/frame | reduction |
+|---|---|---|---|
+| M27-2023 33f OSC | 2165.6 | 78.0 | 27.76x |
+| M16 12f dual-NB | 492.3 | 65.9 | 7.47x |
+| M27-2025 72f mono | 142.0 | 8.8 | 16.17x |
+
+The four NGC7635 runs moved between 6.3 and 26.6 MB/frame in both directions
+(0.55x-4.21x). `/proc/diskstats` is system-wide, and at that size the reading
+is at or below the noise floor of a machine also running a browser and a
+desktop, so those four rows are reported unedited but no conclusion is drawn
+from them. The three corpora above all move the same way and are the basis
+for the reduction claim.
+
+Per-frame degradation (first 3 frames vs. last 3 of Phase A):
+
+| corpus | BEFORE | AFTER |
+|---|---|---|
+| NGC7635 65f mono | 1.23-1.30x | 1.35-1.40x |
+| M27-2023 33f OSC | 1.72x | 1.03x -- degradation eliminated |
+| M16 12f dual-NB | 1.75x | 1.83x (12 frames, too few to read) |
+| M27-2025 72f mono | 1.67x | 1.33x |
+
+This spec's own baseline figures in sections 1 and 2 -- Phase A 1133 s of a
+1689 s run, per-frame 3.85 s -> 13.4 s, 1704 MB/frame -- come from a
+156-frame M63 batch that is not in the E2E manifest, so they are not
+directly comparable to the numbers above. That mismatch is exactly why a
+matched BEFORE run was made on `main` rather than dividing one figure by the
+other.
+
+E2E: verify mode, run twice, all four corpora (`lrgb_mono_ngc7635`,
+`bayer_rgb_m27_2023`, `bayer_nb_hao3_m16`, `mono_lrgb_m27_2025`) came back
+`regen: False, checked: True, match: True`. 19/19 pixel hashes identical
+between the two independent runs and identical to the committed v5.0.4.1
+goldens. No golden regenerated.
+
 ## 4. Proposed
 
 ### 4a. Frame-major cache layout — the real fix (recommended first)
+
+*Implemented — see 3c above for the measured result. Left here as the
+original design rationale.*
 
 Store each frame's pixels **contiguously**:
 
@@ -209,8 +271,8 @@ And it does not help the GPU staging buffers, which need host memory.
 
 1. ~~Periodic writeback~~ (done, 1.45x)
 2. ~~Bounded staging budget~~ (done)
-3. **4a frame-major layout** — biggest remaining win, self-contained, gated by
-   bit-identical goldens
+3. ~~4a frame-major layout~~ (done, 1.25x Phase A wall time, up to 27.76x
+   fewer bytes/frame written -- see 3c)
 4. **4b parallel Phase A** — bigger win but needs the determinism design above
 5. **4c mmap'd cube** — architectural; do after 4a proves the access pattern
 
