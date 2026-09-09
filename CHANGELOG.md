@@ -1,5 +1,43 @@
 # NukeX — Changelog
 
+## v5.0.4.2 — 2026-09-08
+
+### Performance
+- **Stacking writes far less to disk, and no longer slows down as it goes.**
+  NukeX caches every aligned frame on disk so frame data does not have to sit in
+  RAM. That cache stored one *pixel's* values together, which meant writing a
+  single 66 MB frame touched every page of a file that can reach 10 GB — the
+  disk was being asked to write around 2 GB for each frame it was given. Each
+  frame therefore cost more than the one before it as the cache filled.
+
+  The cache now stores one *frame's* pixels together, so caching a frame writes
+  that frame and nothing else. Measured on four real data sets, before and after,
+  on the same machine:
+
+  | | before | after | |
+  |---|---|---|---|
+  | Loading phase, all four sets | 401 s | 320 s | 1.25× faster |
+  | 33 frames of one-shot-colour | 122 s | 70 s | **1.75× faster** |
+  | Written to disk, all four sets | 90.6 GB | 6.3 GB | **14× less** |
+  | — the colour set alone | 71.5 GB | 2.6 GB | 27.8× less |
+
+  One-shot-colour and dual-narrowband data benefit most, because a colour frame
+  interleaves red, green and blue at every pixel and so suffered three times the
+  scattering. Mono data was already close to the disk's best case and changes
+  little.
+
+  Within a single load, the per-frame cost used to climb 1.72× from the first
+  frames to the last on colour data. It is now flat at 1.03×.
+
+  **Your images are unchanged.** This is a storage-layout change and nothing
+  else: all four end-to-end reference stacks come out bit-for-bit identical to
+  v5.0.4.1, verified twice.
+
+### Fixed
+- Two long-standing defects in the frame cache's move constructor: a diagnostic
+  counter was silently reset when the cache was moved, and its initialiser list
+  did not match declaration order.
+
 ## v5.0.4.1 — 2026-09-08
 
 ### Fixed
