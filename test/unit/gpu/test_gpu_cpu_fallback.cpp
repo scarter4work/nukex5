@@ -215,6 +215,46 @@ TEST_CASE("CPU Fallback: select_pixels produces valid output", "[gpu][fallback]"
     }
 }
 
+TEST_CASE("CPU Fallback: predicted noise uses a robust scale, not Welford",
+          "[gpu][fallback]") {
+    // Without GAIN/RDNOISE keywords the noise model falls back to an
+    // across-frame scale. Welford variance is NOT robust: one satellite trail
+    // or cosmic ray inflates it, the predicted noise rises to meet whatever
+    // the estimator produced, and the measured/predicted check goes blind.
+    //
+    // 21 samples: ten at 0.49, ten at 0.51, one outlier at 0.90.
+    //   median 0.51, MAD 0.02  -> robust sigma = 0.02 * 1.4826 = 0.0296520
+    //   predicted = sigma / sqrt(21)             = 0.0064707
+    // Welford on the same samples gives sigma 0.0878584, i.e. 0.0191723 --
+    // 3x larger, and driven entirely by the one bad sample.
+    const int B = 1, C = 1, N = 21;
+    ShadowBuffers buf;
+    buf.allocate(B, C, N);
+
+    for (int fi = 0; fi < N; fi++) {
+        const float v = (fi < 10) ? 0.49f : (fi < 20 ? 0.51f : 0.90f);
+        buf.pixel_values[fi * B] = v;
+        buf.pixel_weights[fi * B] = 1.0f;
+    }
+    buf.n_frames[0] = static_cast<uint16_t>(N);
+    buf.dist_true_signal[0] = 0.51f;
+
+    // Welford of that sample set, computed exactly.
+    buf.welford_mean[0] = 0.5190476f;
+    buf.welford_M2[0]   = 0.1543810f;
+    buf.welford_n[0]    = static_cast<uint32_t>(N);
+    // Robust scale from kernel 2.
+    buf.mad_out[0]      = 0.02f;
+
+    // No noise keywords -> the across-frame fallback is what runs.
+    auto fs = make_frame_stats(N);
+    for (int i = 0; i < N; i++) fs[i].has_noise_keywords = false;
+
+    GPUCPUFallback::select_pixels(buf, fs.data(), B, C, N);
+
+    REQUIRE(buf.noise_sigma[0] == Catch::Approx(0.0064707f).epsilon(0.02));
+}
+
 // ══════════════════════════════════════════════════════════
 // Kernel 4: spatial_context
 // ══════════════════════════════════════════════════════════
@@ -262,6 +302,84 @@ TEST_CASE("CPU Fallback: spatial_context Sobel on uniform image is zero", "[gpu]
     for (int y = 1; y < H - 1; y++)
         for (int x = 1; x < W - 1; x++)
             REQUIRE(grad[y * W + x] == Catch::Approx(0.0f).margin(1e-6f));
+}
+
+// ── local_rms measures REALISED noise, and is blind to structure ──
+//
+// local_rms is the stack's own answer to "how noisy is it here", and the
+// detection-horizon work reads it as the yardstick for what a single pixel can
+// show. MAD about a local median cannot serve: on smooth structure it reports
+// the structure as noise. These pin the estimator to neighbour differences,
+// which cancel anything smooth.
+
+TEST_CASE("CPU Fallback: local_rms is blind to a smooth gradient", "[gpu][fallback]") {
+    // A noiseless linear ramp. There is nothing to measure: the true
+    // pixel-to-pixel noise is exactly zero.
+    const int W = 64, H = 64, C = 1;
+    const float slope = 0.001f;
+    std::vector<float> stacked(W * H);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+            stacked[y * W + x] = 0.2f + slope * static_cast<float>(x);
+
+    std::vector<float> grad(W * H), bg(W * H), rms(W * H);
+    GPUCPUFallback::spatial_context(stacked.data(), W, H, C,
+                                     grad.data(), bg.data(), rms.data());
+
+    // Interior only -- window clipping at the border is a separate concern.
+    for (int y = 12; y < H - 12; y++)
+        for (int x = 12; x < W - 12; x++)
+            REQUIRE(rms[y * W + x] == Catch::Approx(0.0f).margin(1e-5f));
+}
+
+TEST_CASE("CPU Fallback: local_rms recovers a known noise sigma", "[gpu][fallback]") {
+    const int W = 64, H = 64, C = 1;
+    const float sigma = 0.01f;
+    std::mt19937 rng(12345);
+    std::normal_distribution<float> gauss(0.0f, sigma);
+
+    std::vector<float> stacked(W * H);
+    for (int i = 0; i < W * H; i++) stacked[i] = 0.5f + gauss(rng);
+
+    std::vector<float> grad(W * H), bg(W * H), rms(W * H);
+    GPUCPUFallback::spatial_context(stacked.data(), W, H, C,
+                                     grad.data(), bg.data(), rms.data());
+
+    double sum = 0.0; int n = 0;
+    for (int y = 12; y < H - 12; y++)
+        for (int x = 12; x < W - 12; x++) { sum += rms[y * W + x]; n++; }
+    const double mean_rms = sum / n;
+
+    // 15% tolerance: a 15x15 window gives ~200 difference pairs, so the MAD of
+    // those differences carries real sampling scatter.
+    REQUIRE(mean_rms == Catch::Approx(sigma).epsilon(0.15));
+}
+
+TEST_CASE("CPU Fallback: local_rms is not inflated by a gradient under the noise",
+          "[gpu][fallback]") {
+    // The case that matters on real data: faint noise riding a sky gradient.
+    // The gradient must not be counted as noise.
+    const int W = 64, H = 64, C = 1;
+    const float sigma = 0.01f;
+    const float slope = 0.002f;     // 15x15 window spans 0.03 -- 3x sigma
+    std::mt19937 rng(999);
+    std::normal_distribution<float> gauss(0.0f, sigma);
+
+    std::vector<float> stacked(W * H);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+            stacked[y * W + x] = 0.2f + slope * static_cast<float>(x) + gauss(rng);
+
+    std::vector<float> grad(W * H), bg(W * H), rms(W * H);
+    GPUCPUFallback::spatial_context(stacked.data(), W, H, C,
+                                     grad.data(), bg.data(), rms.data());
+
+    double sum = 0.0; int n = 0;
+    for (int y = 12; y < H - 12; y++)
+        for (int x = 12; x < W - 12; x++) { sum += rms[y * W + x]; n++; }
+    const double mean_rms = sum / n;
+
+    REQUIRE(mean_rms == Catch::Approx(sigma).epsilon(0.15));
 }
 
 // ══════════════════════════════════════════════════════════

@@ -1293,6 +1293,12 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // Quality map
     Image quality_map = OutputAssembler::assemble_quality_map(cube);
 
+    // Measured noise: the stack's realised pixel-to-pixel scatter, beside the
+    // predicted noise_map. They answer different questions, and until now only
+    // the prediction existed -- which is why an estimator that adds noise of
+    // its own was invisible to NukeX's own diagnostics.
+    Image measured_noise = OutputAssembler::assemble_measured_noise(cube);
+
     // ═══ PHASE B FOLLOW-UP — Q-solve derived semantic slots ═══════════
     //
     // PixelSelector wrote the per-pixel best raw value for each cube slot
@@ -1490,15 +1496,17 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             Image ts = stacked.cropped(trim.x0, trim.y0, tw, th);
             Image tn = noise_map.cropped(trim.x0, trim.y0, tw, th);
             Image tq = quality_map.cropped(trim.x0, trim.y0, tw, th);
+            Image tm = measured_noise.cropped(trim.x0, trim.y0, tw, th);
             // A refused crop returns an empty image; keeping the untrimmed
             // frame is the only safe answer, and silence is not.
-            if (ts.empty() || tn.empty() || tq.empty()) {
+            if (ts.empty() || tn.empty() || tq.empty() || tm.empty()) {
                 obs.message("Coverage trim skipped: the computed rectangle did "
                             "not fit the output.");
             } else {
-                stacked     = std::move(ts);
-                noise_map   = std::move(tn);
-                quality_map = std::move(tq);
+                stacked        = std::move(ts);
+                noise_map      = std::move(tn);
+                quality_map    = std::move(tq);
+                measured_noise = std::move(tm);
                 for (auto& [name, plane] : result.derived.slots) {
                     if (plane.size() != static_cast<std::size_t>(out_width) *
                                         static_cast<std::size_t>(out_height))
@@ -1571,8 +1579,53 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         }
     }
 
+    // The one number that makes estimator-injected noise visible. NukeX's
+    // noise_map is a model of what the noise ought to be; measured_noise is
+    // what it is. A ratio above 1 says the stack is noisier than its own model
+    // predicts, which is exactly the signature that hid for three releases.
+    {
+        const double ratio =
+            OutputAssembler::measured_vs_predicted_ratio(measured_noise, noise_map);
+        if (ratio > 0.0) {
+            // Both medians are reported, not just the ratio: a ratio alone
+            // cannot distinguish "the stack is clean" from "both numbers are
+            // wrong in the same direction", and the predicted term depends on
+            // FITS gain keywords that are not always what they claim to be.
+            double sm = 0.0, sp = 0.0;
+            {
+                std::vector<float> mv, pv;
+                mv.reserve(1024); pv.reserve(1024);
+                for (int y = 0; y < measured_noise.height(); ++y)
+                    for (int x = 0; x < measured_noise.width(); ++x) {
+                        const float m = measured_noise.at(x, y, 0);
+                        if (m > 0.0f) mv.push_back(m);
+                    }
+                for (int y = 0; y < noise_map.height(); ++y)
+                    for (int x = 0; x < noise_map.width(); ++x) {
+                        const float v = noise_map.at(x, y, 0);
+                        if (v > 0.0f) pv.push_back(v);
+                    }
+                auto med = [](std::vector<float>& v) -> double {
+                    if (v.empty()) return 0.0;
+                    std::size_t k = v.size() / 2;
+                    std::nth_element(v.begin(), v.begin() + k, v.end());
+                    return v[k];
+                };
+                sm = med(mv); sp = med(pv);
+            }
+            char msg[256];
+            std::snprintf(msg, sizeof(msg),
+                          "Noise check: measured %.3e, predicted %.3e, "
+                          "ratio %.2fx (1.00x means the stack is as clean as "
+                          "its model says)",
+                          sm, sp, ratio);
+            obs.message(msg);
+        }
+    }
+
     result.stacked = std::move(stacked);
     result.noise_map = std::move(noise_map);
+    result.measured_noise = std::move(measured_noise);
     result.quality_map = std::move(quality_map);
     // Move the cube into a heap-allocated holder on the result so
     // Phase B (Task 10) and the integration tests can read derived

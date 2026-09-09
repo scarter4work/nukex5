@@ -298,6 +298,8 @@ void GPUExecutor::execute_select_gpu(
         C * B * sizeof(float), buf.welford_M2.data());
     cl_mem d_welford_n = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
         C * B * sizeof(uint32_t), buf.welford_n.data());
+    cl_mem d_mad = create_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+        C * B * sizeof(float), buf.mad_out.data());
 
     cl_mem d_output = create_buf(ctx, CL_MEM_WRITE_ONLY, C * B * sizeof(float), nullptr);
     cl_mem d_noise = create_buf(ctx, CL_MEM_WRITE_ONLY, C * B * sizeof(float), nullptr);
@@ -316,6 +318,7 @@ void GPUExecutor::execute_select_gpu(
     clSetKernelArg(k, arg++, sizeof(cl_mem), &d_norm_offset);
     clSetKernelArg(k, arg++, sizeof(cl_mem), &d_welford_M2);
     clSetKernelArg(k, arg++, sizeof(cl_mem), &d_welford_n);
+    clSetKernelArg(k, arg++, sizeof(cl_mem), &d_mad);
     clSetKernelArg(k, arg++, sizeof(int), &C);
     clSetKernelArg(k, arg++, sizeof(int), &N);
     clSetKernelArg(k, arg++, sizeof(int), &B);
@@ -342,6 +345,7 @@ void GPUExecutor::execute_select_gpu(
     clReleaseMemObject(d_norm_offset);
     clReleaseMemObject(d_welford_M2);
     clReleaseMemObject(d_welford_n);
+    clReleaseMemObject(d_mad);
     clReleaseMemObject(d_output);
     clReleaseMemObject(d_noise);
     clReleaseMemObject(d_snr);

@@ -52,3 +52,62 @@ TEST_CASE("OutputAssembler: shape channel encodes dominant_shape correctly", "[a
     REQUIRE(quality.at(2, 0, 3) == Catch::Approx(2.0f));
     REQUIRE(quality.at(3, 0, 3) == Catch::Approx(3.0f));
 }
+
+// ── Measured noise: the stack's realised scatter, surfaced ──
+//
+// NukeX's noise_map is the PREDICTED uncertainty of each estimate (a CCD
+// model, or Welford across frames). It cannot see noise the estimator itself
+// injects, which is how a 1.05-1.47x penalty survived several releases.
+// assemble_measured_noise surfaces the realised pixel-to-pixel scatter beside
+// it, and the ratio of the two is the instrument that would have caught it.
+
+TEST_CASE("OutputAssembler: measured noise map carries local_rms", "[assembler]") {
+    auto config = cfg_for(FilterClass::BROADBAND_L, "L");
+    Cube cube(8, 8, config);
+    for (int y = 0; y < 8; y++)
+        for (int x = 0; x < 8; x++)
+            cube.at(x, y).local_rms = 0.25f * static_cast<float>(x);
+
+    auto measured = OutputAssembler::assemble_measured_noise(cube);
+    REQUIRE(measured.width() == 8);
+    REQUIRE(measured.height() == 8);
+    REQUIRE(measured.n_channels() == 1);
+    REQUIRE(measured.at(0, 3, 0) == Catch::Approx(0.0f));
+    REQUIRE(measured.at(4, 3, 0) == Catch::Approx(1.0f));
+}
+
+TEST_CASE("OutputAssembler: measured/predicted ratio is 1 when they agree (mono)",
+          "[assembler]") {
+    Image measured(8, 8, 1);
+    Image predicted(8, 8, 1);
+    measured.fill(0.02f);
+    predicted.fill(0.02f);
+    REQUIRE(OutputAssembler::measured_vs_predicted_ratio(measured, predicted)
+            == Catch::Approx(1.0).epsilon(1e-4));
+}
+
+TEST_CASE("OutputAssembler: measured/predicted ratio reports an inflated measurement",
+          "[assembler]") {
+    Image measured(8, 8, 1);
+    Image predicted(8, 8, 1);
+    measured.fill(0.03f);
+    predicted.fill(0.02f);
+    REQUIRE(OutputAssembler::measured_vs_predicted_ratio(measured, predicted)
+            == Catch::Approx(1.5).epsilon(1e-4));
+}
+
+TEST_CASE("OutputAssembler: ratio combines colour channels in quadrature",
+          "[assembler]") {
+    // Measured noise is a LUMINANCE quantity (the spatial kernel builds a
+    // luminance window), so a 3-channel predicted map must be combined the
+    // same way before the two are comparable:
+    //   sigma_L = sqrt((0.2126 s_R)^2 + (0.7152 s_G)^2 + (0.0722 s_B)^2)
+    // With every channel at 1.0 that is 0.74961, so a measured map holding
+    // 0.74961 must read as a ratio of exactly 1.
+    Image predicted(4, 4, 3);
+    predicted.fill(1.0f);
+    Image measured(4, 4, 1);
+    measured.fill(0.74961f);
+    REQUIRE(OutputAssembler::measured_vs_predicted_ratio(measured, predicted)
+            == Catch::Approx(1.0).epsilon(1e-3));
+}

@@ -20,9 +20,12 @@ __kernel void select_pixels(
     // below can be evaluated on the raw value it is only meaningful for.
     __global const float*   frame_norm_scale,   // [C * N]
     __global const float*   frame_norm_offset,  // [C * N]
-    // Welford variance for fallback
+    // Across-frame fallback scale. `mad` is kernel 2's robust scale and is
+    // preferred; Welford is kept only for degenerate voxels where the robust
+    // scale is zero.
     __global const float*   welford_M2,         // [C * B]
     __global const uint*    welford_n,          // [C * B]
+    __global const float*   mad,                // [C * B]
     // Dimensions
     int n_channels,
     int max_frames,
@@ -44,12 +47,20 @@ __kernel void select_pixels(
     int nf = (int)n_frames_in[ch * B + vi];
     float out_val = dist_true_signal[ch * B + vi];
 
-    // Compute welford variance for fallback
+    // Across-frame fallback scale (mirrors the CPU fallback).
+    //
+    // Welford variance is NOT robust: one satellite trail or cosmic ray
+    // inflates it, so the predicted noise rises to meet whatever the estimator
+    // produced and the measured-vs-predicted check goes blind.
     float w_M2 = welford_M2[ch * B + vi];
     uint  w_n  = welford_n[ch * B + vi];
     float welford_var = (w_n > 1)
         ? max(0.0f, w_M2) / (float)(w_n - 1)
         : 0.0f;
+    float robust_sigma = mad[ch * B + vi] * 1.4826f;
+    float fallback_var = (robust_sigma > 0.0f)
+                       ? robust_sigma * robust_sigma
+                       : welford_var;
 
     // Noise propagation
     float weight_sum = 0.0f;
@@ -77,7 +88,7 @@ __kernel void select_pixels(
             float read_var = (rn * rn) / (g * g);
             sigma2 = a * a * (shot_var + read_var) / (65535.0f * 65535.0f);
         } else {
-            sigma2 = welford_var;
+            sigma2 = fallback_var;
         }
 
         weight_sum += w;

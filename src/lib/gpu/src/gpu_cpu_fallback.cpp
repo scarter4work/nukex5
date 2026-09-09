@@ -233,12 +233,25 @@ void GPUCPUFallback::select_pixels(
             double weight_sum = 0.0;
             double variance_sum = 0.0;
 
-            // Compute welford variance for fallback
+            // Across-frame fallback scale, used when a frame carries no
+            // usable GAIN/RDNOISE keywords.
+            //
+            // Welford variance is NOT robust: a single satellite trail or
+            // cosmic ray inflates it, so the PREDICTED noise rises to meet
+            // whatever the estimator actually produced and the
+            // measured-vs-predicted check goes blind to estimator-injected
+            // noise. Kernel 2 has already computed a robust MAD for this
+            // voxel-channel, so use it, and keep Welford only where the robust
+            // scale is degenerate (identical samples, or too few to form one).
             float w_M2 = buf.welford_M2[ch * B + vi];
             uint32_t w_n = buf.welford_n[ch * B + vi];
             float welford_var = (w_n > 1)
                 ? std::max(0.0f, w_M2) / static_cast<float>(w_n - 1)
                 : 0.0f;
+            const float robust_sigma = buf.mad_out[ch * B + vi] * 1.4826f;
+            const float fallback_var = (robust_sigma > 0.0f)
+                                     ? robust_sigma * robust_sigma
+                                     : welford_var;
 
             for (int fi = 0; fi < nf; fi++) {
                 float w = buf.pixel_weights[ch * N * B + fi * B + vi];
@@ -268,7 +281,7 @@ void GPUCPUFallback::select_pixels(
                     float read_var = (rn * rn) / (g * g);
                     sigma2 = a * a * (shot_var + read_var) / (65535.0f * 65535.0f);
                 } else {
-                    sigma2 = welford_var;
+                    sigma2 = fallback_var;
                 }
 
                 weight_sum += static_cast<double>(w);
@@ -396,7 +409,42 @@ void GPUCPUFallback::spatial_context(
             }
 
             local_background[pi] = location;
-            local_rms[pi] = mad_val * 1.4826f;  // MAD * 1.4826 ≈ σ for Gaussian
+
+            // ── Local RMS from neighbour differences ──
+            //
+            // MAD about the local median reports smooth STRUCTURE as noise: on
+            // a noiseless ramp of slope s it returns 5.93*s, and on a real sky
+            // gradient it inflates the noise by tens of percent. Differencing
+            // horizontally adjacent pixels cancels anything smooth and leaves
+            // only what changes from one pixel to the next, which is what
+            // "how noisy is this stack here" actually means.
+            //
+            // The window is gathered row-major, so entries adjacent within a
+            // row are adjacent on the image; row boundaries are skipped.
+            const int win_w = x1 - x0 + 1;
+            const int win_h = y1 - y0 + 1;
+            float diffs[225];
+            int dn = 0;
+            for (int ry = 0; ry < win_h; ry++)
+                for (int rx = 0; rx + 1 < win_w; rx++)
+                    diffs[dn++] = window[ry * win_w + rx + 1] - window[ry * win_w + rx];
+
+            float rms_val = 0.0f;
+            if (dn > 1) {
+                float sorted_d[225];
+                for (int i = 0; i < dn; i++) sorted_d[i] = diffs[i];
+                insertion_sort(sorted_d, dn);
+                const float med_d = sorted_median(sorted_d, dn);
+
+                float abs_dev_d[225];
+                for (int i = 0; i < dn; i++) abs_dev_d[i] = std::fabs(diffs[i] - med_d);
+                insertion_sort(abs_dev_d, dn);
+
+                // 1.4826 converts MAD to a Gaussian sigma; 1/sqrt(2) undoes the
+                // differencing of two independent samples.
+                rms_val = sorted_median(abs_dev_d, dn) * 1.4826f * 0.70710678f;
+            }
+            local_rms[pi] = rms_val;
         }
     }
 }

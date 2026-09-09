@@ -32,7 +32,7 @@ endfunction()
 
 # Core library tests — each added when implemented (Tasks 4-10)
 nukex_add_test(test_image         unit/io/test_image.cpp           nukex4_io)
-nukex_add_test(test_fits_reader   unit/io/test_fits_reader.cpp     nukex4_io)
+nukex_add_test(test_fits_reader   unit/io/test_fits_reader.cpp     nukex4_io cfitsio)
 nukex_add_test(test_debayer       unit/io/test_debayer.cpp         nukex4_io)
 nukex_add_test(test_filter        unit/io/test_filter.cpp          nukex4_io)
 nukex_add_test(test_filter_classifier_io unit/io/test_filter_classifier.cpp nukex4_io nukex4_core)

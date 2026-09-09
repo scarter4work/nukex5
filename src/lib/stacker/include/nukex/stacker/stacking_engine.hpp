@@ -151,7 +151,8 @@ public:
         std::string error;               // human-readable explanation when !ok
 
         Image                  stacked;
-        Image                  noise_map;
+        Image                  noise_map;        // PREDICTED uncertainty (CCD model / Welford)
+        Image                  measured_noise;   // REALISED pixel-to-pixel scatter
         Image                  quality_map;
         std::unique_ptr<Cube>  cube;     // populated by Phase A; consumed by Phase B (Task 10)
         DerivedStack           derived;  // Phase B Q-solve output (Task 10B)

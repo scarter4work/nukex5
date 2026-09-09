@@ -1163,6 +1163,26 @@ bool NukeXInstance::ExecuteGlobal()
       progress.message( "Noise map opened." );
    }
 
+   // Create measured-noise window.
+   //
+   // NukeX_noise is the noise the CCD model PREDICTS for each estimate.
+   // NukeX_measured_noise is the scatter the finished stack actually has.
+   // Where the second exceeds the first, something between the samples and
+   // the pixel is adding noise of its own -- a thing the predicted map is
+   // structurally unable to show. Single channel (the spatial kernel measures
+   // on a luminance window), so it is opened without a slot mapping.
+   if ( !result.measured_noise.empty() )
+   {
+      pcl::FITSKeywordArray ka = base_output_keywords(
+          NUKEX_VERSION_STRING, "measured_noise",
+          result.n_frames_processed, result.n_frames_failed_alignment );
+      append_calibration_keywords( ka, result );
+
+      OpenSlotWindows( result.measured_noise, nullptr,
+                       "NukeX_measured_noise", ka );
+      progress.message( "Measured noise map opened." );
+   }
+
    progress.message( "NukeX done." );
    return true;
 }

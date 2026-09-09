@@ -1,5 +1,52 @@
 # NukeX — Changelog
 
+## v5.0.4.3 — 2026-09-09
+
+### New
+
+- **NukeX now measures its own noise, and shows you the result.**
+  Until now NukeX only ever *predicted* how noisy your stack should be, from a
+  camera noise model. It never checked. A new window, **NukeX_measured_noise**,
+  opens beside the existing NukeX_noise and shows the scatter the finished
+  stack actually has, and the console reports both numbers with their ratio:
+
+      Noise check: measured 2.431e-04, predicted 2.319e-04, ratio 1.07x
+
+  A ratio near 1.00x means the stack is as clean as its own model says it
+  should be. A ratio well above 1 means something between your frames and the
+  final pixel is adding noise that the camera model cannot account for. That
+  had never been visible before, which is how a real noise penalty went
+  unnoticed across several releases.
+
+### Fixed
+
+- **The local noise measurement counted your nebula as noise.** NukeX's
+  per-pixel noise figure was computed as the spread of values in a small
+  window, which cannot tell a faint gradient from actual grain: on a perfectly
+  smooth ramp with no noise at all it reported a noise level of nearly six
+  times the ramp's slope. It now compares neighbouring pixels, which cancels
+  anything smooth and leaves only what genuinely varies from pixel to pixel.
+
+- **One satellite trail no longer inflates the whole pixel's noise estimate.**
+  Where a frame carries no usable camera noise keywords, NukeX falls back to
+  measuring the spread across your frames. That measurement was not robust, so
+  a single cosmic ray or aircraft could inflate it several-fold. It now uses a
+  robust scale that ignores such outliers — on a test pixel with one bad
+  sample in twenty-one, the estimate drops threefold to the value the good
+  samples support.
+
+- **Camera gain settings are no longer mistaken for electronic gain.** ZWO and
+  QHY cameras write `GAIN` as the gain *menu setting* (a number like 200) and
+  `EGAIN` as the real electronic gain in electrons per ADU (a number like
+  0.24). NukeX read whichever it found, so a menu setting could end up in the
+  noise model as if it were a physical quantity, understating the noise
+  enormously. `EGAIN` is now preferred, `GAIN` is accepted only when the value
+  is one a real camera could have, and when the gain is genuinely unknown
+  NukeX says so by falling back to measuring your frames instead of trusting a
+  wrong number.
+
+**Your stacked image is unchanged by this release.** Only the noise map moves.
+
 ## v5.0.4.2 — 2026-09-08
 
 ### Performance
