@@ -137,7 +137,7 @@ for the three corpora with enough volume to read:
 | M16 12f dual-NB | 492.3 | 65.9 | 7.47x |
 | M27-2025 72f mono | 142.0 | 8.8 | 16.17x |
 
-The four NGC7635 runs moved between 6.3 and 26.6 MB/frame in both directions
+The four NGC7635 runs moved between 5.6 and 26.6 MB/frame in both directions
 (0.55x-4.21x). `/proc/diskstats` is system-wide, and at that size the reading
 is at or below the noise floor of a machine also running a browser and a
 desktop, so those four rows are reported unedited but no conclusion is drawn
