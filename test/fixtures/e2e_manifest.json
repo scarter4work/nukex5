@@ -1,93 +1,99 @@
 {
-  "schema_version": 2,
-  "description": "v5 E2E corpus: preserved v4 LRGB-mono floor + OSC, dual-NB (M16 HaO3) and LRGB-mono (M27 2025) cases",
-  "cases": [
-    {
-      "name": "lrgb_mono_ngc7635",
-      "filter_class_expected": "LRGB-mono",
-      "light_dir": "/mnt/qnap/astro_data/NGC7635/L/Lights",
-      "flat_dir": "",
-      "primary_stretch": 0,
-      "primary_stretch_label": "Auto",
-      "finishing_stretch": 0,
-      "finishing_stretch_label": "None",
-      "wall_time_budget_s": 3600,
-      "min_frames_ok_alignment": 65,
-      "dropdown_sweep": [
+    "schema_version": 2,
+    "description": "v5 E2E corpus: preserved v4 LRGB-mono floor + OSC, dual-NB (M16 HaO3) and LRGB-mono (M27 2025) cases",
+    "cases": [
         {
-          "primary_stretch": 2,
-          "label": "GHS"
+            "name": "lrgb_mono_ngc7635",
+            "filter_class_expected": "LRGB-mono",
+            "light_dir": "/mnt/qnap/astro_data/NGC7635/L/Lights",
+            "flat_dir": "",
+            "primary_stretch": 0,
+            "primary_stretch_label": "Auto",
+            "finishing_stretch": 0,
+            "finishing_stretch_label": "None",
+            "wall_time_budget_s": 3600,
+            "min_frames_ok_alignment": 65,
+            "dropdown_sweep": [
+                {
+                    "primary_stretch": 2,
+                    "label": "GHS"
+                },
+                {
+                    "primary_stretch": 3,
+                    "label": "MTF"
+                },
+                {
+                    "primary_stretch": 4,
+                    "label": "ArcSinh"
+                }
+            ],
+            "golden_frozen": true,
+            "golden_note": "Frozen floor re-cut 2026-09-08 for v5.0.4.1, one release after the v5.0.4.0 re-cut. ONE attributed cause: the auto-stretch's default sky level drops from 0.25 to 0.12. The evidence that it IS the only cause is in the diff -- `stretched` moved (8ecab0f9 -> 9a1051f4) and NOTHING else did. stacked fe52757a, noise dcf69a6e and composed 7b1b49e6 are bit-identical to v5.0.4.0, and so are all three sweeps (GHS cf23fb5c, MTF 8be5f2d8, ArcSinh d93f9aa7), because those curves do not use VeraLux's auto_tune. That is the exact opposite signature to the v5.0.4.0 re-cut, where every hash moved because the stacked pixels themselves had changed; here the stack is untouched and only the one output that reads the sky target moved. This corpus is mono (nc=1), so v5.0.4.1's other fix -- colour stacks no longer handing their synthesized luminance to PixInsight as an alpha channel -- cannot touch it, and the hashes confirm it did not. Why the change: 0.25 is the screen-autostretch convention, but a screen stretch is something you look through rather than keep. It spends a quarter of the output range on empty sky and leaves the subject on a bright grey pedestal. Measured on the composed output of four real corpora, 0.12 raises signal saturation 1.34x to 1.72x (M33 0.069->0.118, M27 2023 0.082->0.110, M27 2025 0.067->0.115, M16 dual-NB 0.473->0.691) and clips nothing at either end -- black stays 0.0000% and white is unmoved, because the shadow point is bounded independently of the sky target. It remains a user control. Do not re-cut this floor without the same kind of measurement."
         },
         {
-          "primary_stretch": 3,
-          "label": "MTF"
+            "name": "bayer_rgb_m27_2023",
+            "filter_class_expected": "BROADBAND_OSC",
+            "light_dir": "/mnt/qnap/astro_data/4_12_2023/M27",
+            "flat_dir": "",
+            "primary_stretch": 0,
+            "primary_stretch_label": "Auto",
+            "finishing_stretch": 0,
+            "finishing_stretch_label": "None",
+            "wall_time_budget_s": 10800,
+            "min_frames_ok_alignment": 30,
+            "min_bright_saturation": 0.1,
+            "min_bright_saturation_note": "measured 0.121 on v5.0.5.0"
         },
         {
-          "primary_stretch": 4,
-          "label": "ArcSinh"
+            "name": "bayer_nb_hao3_m16",
+            "filter_class_expected": "DUAL_NB_OSC",
+            "light_dir": "/home/scarter4work/projects/processing/M16",
+            "light_glob": "*HaO3*.fit",
+            "max_frames": 12,
+            "flat_dir": "",
+            "primary_stretch": 0,
+            "primary_stretch_label": "Auto",
+            "finishing_stretch": 0,
+            "finishing_stretch_label": "None",
+            "wall_time_budget_s": 7200,
+            "min_frames_ok_alignment": 12,
+            "visual_bar": "no green cast in the nebula; Ha red, OIII teal; NUKEX_QE_CONFIDENCE = database",
+            "min_bright_saturation": 0.07,
+            "min_bright_saturation_note": "2026-09-04 produced 0.085; today 0.011 -- FAILS BY DESIGN"
+        },
+        {
+            "name": "mono_lrgb_m27_2025",
+            "filter_class_expected": "BROADBAND_L + BROADBAND_RGB",
+            "light_dir": "/mnt/qnap/astro_data/9_1_2025/M27",
+            "flat_dir": "",
+            "primary_stretch": 0,
+            "primary_stretch_label": "Auto",
+            "finishing_stretch": 0,
+            "finishing_stretch_label": "None",
+            "wall_time_budget_s": 3600,
+            "min_frames_ok_alignment": 51,
+            "alignment_note": "51 of 72 measured 2026-09-04. The 21 failures are the two temporal ends of a 7-hour session: chronological frames 0-19 and 66-71. Failure rate rises monotonically with distance from the reference (0-15 frames away: 31 ok / 0 failed; 32-39 away: 0 ok / 9 failed), and the reference is already the temporal midpoint, so this is cumulative tracking drift the single-reference matcher cannot bridge -- not filter, and not reference selection, which took this case from 1 of 72 to 51 of 72. Raise this floor when chained alignment lands.",
+            "skip": false,
+            "skip_reason": "",
+            "note": "Re-enabled 2026-09-05. Phase B now carries a per-channel frame set: CacheSig gained a routing key so each mono filter gets its own cache, ShadowBuffers::n_frames is per channel, and global_frame_of maps each channel's local slot to the batch-global frame its FrameStats belong to. The golden for this case has never existed -- the previous one was deleted because it recorded three empty channels -- so it is generated fresh in this re-baseline.",
+            "min_bright_saturation": 0.06,
+            "min_bright_saturation_note": "measured 0.071 on v5.0.5.0"
+        },
+        {
+            "name": "bayer_nb_s2o3_placeholder",
+            "skip": true,
+            "skip_reason": "no S2O3 corpus on this machine"
+        },
+        {
+            "name": "lrgbsho_placeholder",
+            "skip": true,
+            "skip_reason": "no mixed L+R+G+B+HaO3 corpus on this machine"
         }
-      ],
-      "golden_frozen": true,
-      "golden_note": "Frozen floor re-cut 2026-09-08 for v5.0.4.1, one release after the v5.0.4.0 re-cut. ONE attributed cause: the auto-stretch's default sky level drops from 0.25 to 0.12. The evidence that it IS the only cause is in the diff -- `stretched` moved (8ecab0f9 -> 9a1051f4) and NOTHING else did. stacked fe52757a, noise dcf69a6e and composed 7b1b49e6 are bit-identical to v5.0.4.0, and so are all three sweeps (GHS cf23fb5c, MTF 8be5f2d8, ArcSinh d93f9aa7), because those curves do not use VeraLux's auto_tune. That is the exact opposite signature to the v5.0.4.0 re-cut, where every hash moved because the stacked pixels themselves had changed; here the stack is untouched and only the one output that reads the sky target moved. This corpus is mono (nc=1), so v5.0.4.1's other fix -- colour stacks no longer handing their synthesized luminance to PixInsight as an alpha channel -- cannot touch it, and the hashes confirm it did not. Why the change: 0.25 is the screen-autostretch convention, but a screen stretch is something you look through rather than keep. It spends a quarter of the output range on empty sky and leaves the subject on a bright grey pedestal. Measured on the composed output of four real corpora, 0.12 raises signal saturation 1.34x to 1.72x (M33 0.069->0.118, M27 2023 0.082->0.110, M27 2025 0.067->0.115, M16 dual-NB 0.473->0.691) and clips nothing at either end -- black stays 0.0000% and white is unmoved, because the shadow point is bounded independently of the sky target. It remains a user control. Do not re-cut this floor without the same kind of measurement."
-    },
-    {
-      "name": "bayer_rgb_m27_2023",
-      "filter_class_expected": "BROADBAND_OSC",
-      "light_dir": "/mnt/qnap/astro_data/4_12_2023/M27",
-      "flat_dir": "",
-      "primary_stretch": 0,
-      "primary_stretch_label": "Auto",
-      "finishing_stretch": 0,
-      "finishing_stretch_label": "None",
-      "wall_time_budget_s": 10800,
-      "min_frames_ok_alignment": 30
-    },
-    {
-      "name": "bayer_nb_hao3_m16",
-      "filter_class_expected": "DUAL_NB_OSC",
-      "light_dir": "/home/scarter4work/projects/processing/M16",
-      "light_glob": "*HaO3*.fit",
-      "max_frames": 12,
-      "flat_dir": "",
-      "primary_stretch": 0,
-      "primary_stretch_label": "Auto",
-      "finishing_stretch": 0,
-      "finishing_stretch_label": "None",
-      "wall_time_budget_s": 7200,
-      "min_frames_ok_alignment": 12,
-      "visual_bar": "no green cast in the nebula; Ha red, OIII teal; NUKEX_QE_CONFIDENCE = database"
-    },
-    {
-      "name": "mono_lrgb_m27_2025",
-      "filter_class_expected": "BROADBAND_L + BROADBAND_RGB",
-      "light_dir": "/mnt/qnap/astro_data/9_1_2025/M27",
-      "flat_dir": "",
-      "primary_stretch": 0,
-      "primary_stretch_label": "Auto",
-      "finishing_stretch": 0,
-      "finishing_stretch_label": "None",
-      "wall_time_budget_s": 3600,
-      "min_frames_ok_alignment": 51,
-      "alignment_note": "51 of 72 measured 2026-09-04. The 21 failures are the two temporal ends of a 7-hour session: chronological frames 0-19 and 66-71. Failure rate rises monotonically with distance from the reference (0-15 frames away: 31 ok / 0 failed; 32-39 away: 0 ok / 9 failed), and the reference is already the temporal midpoint, so this is cumulative tracking drift the single-reference matcher cannot bridge -- not filter, and not reference selection, which took this case from 1 of 72 to 51 of 72. Raise this floor when chained alignment lands.",
-      "skip": false,
-      "skip_reason": "",
-      "note": "Re-enabled 2026-09-05. Phase B now carries a per-channel frame set: CacheSig gained a routing key so each mono filter gets its own cache, ShadowBuffers::n_frames is per channel, and global_frame_of maps each channel's local slot to the batch-global frame its FrameStats belong to. The golden for this case has never existed -- the previous one was deleted because it recorded three empty channels -- so it is generated fresh in this re-baseline."
-    },
-    {
-      "name": "bayer_nb_s2o3_placeholder",
-      "skip": true,
-      "skip_reason": "no S2O3 corpus on this machine"
-    },
-    {
-      "name": "lrgbsho_placeholder",
-      "skip": true,
-      "skip_reason": "no mixed L+R+G+B+HaO3 corpus on this machine"
-    }
-  ],
-  "phaseB_baseline_file": "phaseB_baseline_ms.txt",
-  "phaseB_speedup_min": 1.5,
-  "output_root": "/home/scarter4work/.cache/nukex_e2e",
-  "golden_dir": "test/fixtures/golden",
-  "cache_dir": "/home/scarter4work/.cache/nukex_e2e_frames",
-  "budget_note": "wall_time_budget_s is a hang detector, not a speed limit: set well clear of measured times so a slow-but-correct run passes and only a stuck one fails."
+    ],
+    "phaseB_baseline_file": "phaseB_baseline_ms.txt",
+    "phaseB_speedup_min": 1.5,
+    "output_root": "/home/scarter4work/.cache/nukex_e2e",
+    "golden_dir": "test/fixtures/golden",
+    "cache_dir": "/home/scarter4work/.cache/nukex_e2e_frames",
+    "budget_note": "wall_time_budget_s is a hang detector, not a speed limit: set well clear of measured times so a slow-but-correct run passes and only a stuck one fails."
 }

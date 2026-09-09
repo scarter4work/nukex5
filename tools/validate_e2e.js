@@ -133,6 +133,87 @@ function findWindow(id_substr) {
    return null;
 }
 
+function brightSaturation(win) {
+   // Median HSV-style saturation over the brightest 2% of pixels.
+   //
+   // This exists because the E2E asserted thirteen things about a stack and
+   // not one of them was its COLOUR.  M16's dual-narrowband saturation fell
+   // from 0.085 to 0.015 across releases between 2026-09-04 and v5.0.4.2 --
+   // an effectively achromatic nebula -- and every check still passed, because
+   // a pixel hash moves for any reason and says nothing about whether the
+   // colour is right.  The manifest carried a `visual_bar` describing the
+   // intended colour all along; a sentence no machine reads is not a test.
+   //
+   // Mono returns null: saturation is meaningless with one channel.
+   var img = win.mainView.image;
+   var w = img.width, h = img.height, nc = img.numberOfChannels;
+   if (nc < 3) return null;
+
+   var n = w * h;
+   var r = new Float32Array(n), g = new Float32Array(n), b = new Float32Array(n);
+   img.getSamples(r, new Rect(0, 0, w, h), 0);
+   img.getSamples(g, new Rect(0, 0, w, h), 1);
+   img.getSamples(b, new Rect(0, 0, w, h), 2);
+
+   // Luminance threshold for the brightest 2%, by histogram rather than a
+   // sort: sorting 15 million floats in PJSR is not worth the wall time.
+   var BINS = 4096, hist = new Uint32Array(BINS), lum = new Float32Array(n);
+   var i, L, maxL = 0;
+   for (i = 0; i < n; i++) {
+      L = 0.2126 * r[i] + 0.7152 * g[i] + 0.0722 * b[i];
+      lum[i] = L;
+      if (L > maxL) maxL = L;
+   }
+   if (maxL <= 0) return null;
+   for (i = 0; i < n; i++) {
+      var bi = Math.floor(lum[i] / maxL * (BINS - 1));
+      hist[bi < 0 ? 0 : (bi >= BINS ? BINS - 1 : bi)]++;
+   }
+   // Two stages, because one is not enough. The sky bunches almost every
+   // pixel into a narrow luminance range while stars reach 1.0, so a single
+   // pass puts far more than 2% of the image inside one bin; taking that
+   // bin's edge as the threshold then selects half the frame, and the median
+   // saturation collapses to the neutral background. Measured against numpy's
+   // exact percentile, one pass reported 0.0000 where the true value was
+   // 0.0110. Stage two re-bins inside the winning bin.
+   var want = Math.floor(n * 0.02), acc = 0, cut = BINS - 1;
+   for (i = BINS - 1; i >= 0; i--) { acc += hist[i]; if (acc >= want) { cut = i; break; } }
+   var loEdge = cut / (BINS - 1) * maxL;
+   var hiEdge = (cut + 1) / (BINS - 1) * maxL;
+   var above = acc - hist[cut];              // pixels strictly above this bin
+   var need  = want - above;                 // how many of this bin we need
+   var thr = loEdge;
+   if (need > 0 && hist[cut] > 0 && hiEdge > loEdge) {
+      var fine = new Uint32Array(BINS), span = hiEdge - loEdge;
+      for (i = 0; i < n; i++) {
+         if (lum[i] < loEdge || lum[i] >= hiEdge) continue;
+         var fi2 = Math.floor((lum[i] - loEdge) / span * (BINS - 1));
+         fine[fi2 < 0 ? 0 : (fi2 >= BINS ? BINS - 1 : fi2)]++;
+      }
+      var facc = 0;
+      for (i = BINS - 1; i >= 0; i--) {
+         facc += fine[i];
+         if (facc >= need) { thr = loEdge + i / (BINS - 1) * span; break; }
+      }
+   }
+
+   // Saturation of the selected pixels, median via the same histogram trick.
+   var shist = new Uint32Array(BINS), sn = 0;
+   for (i = 0; i < n; i++) {
+      if (lum[i] < thr) continue;
+      var mx = r[i] > g[i] ? (r[i] > b[i] ? r[i] : b[i]) : (g[i] > b[i] ? g[i] : b[i]);
+      var mn = r[i] < g[i] ? (r[i] < b[i] ? r[i] : b[i]) : (g[i] < b[i] ? g[i] : b[i]);
+      var sat = mx > 1e-6 ? (mx - mn) / mx : 0;
+      var sb = Math.floor(sat * (BINS - 1));
+      shist[sb < 0 ? 0 : (sb >= BINS ? BINS - 1 : sb)]++;
+      sn++;
+   }
+   if (sn === 0) return null;
+   var half = sn >> 1, run = 0, med = 0;
+   for (i = 0; i < BINS; i++) { run += shist[i]; if (run >= half) { med = i / (BINS - 1); break; } }
+   return med;
+}
+
 function fnvPixelHash(win) {
    // Deterministic 32-bit FNV-1a over raw pixel floats, sufficient for bitwise
    // regression detection.  Not cryptographic — purpose is to detect any
@@ -232,6 +313,10 @@ function runPrimary(tc, out_dir, manifest) {
          catch (e) { saved[tags[t] + "_save_error"] = String(e); }
          try { hashes[tags[t]] = fnvPixelHash(w); }
          catch (e) { hashes[tags[t] + "_hash_error"] = String(e); }
+         if (tags[t] === "stretched") {
+            try { hashes.stretched_bright_saturation = brightSaturation(w); }
+            catch (e) { hashes.saturation_error = String(e); }
+         }
       }
    }
 
@@ -255,6 +340,25 @@ function runPrimary(tc, out_dir, manifest) {
                reason: "output window has more than 3 channels, so PixInsight "
                      + "renders the extra plane(s) as alpha: "
                      + alpha_violations.join(", "),
+               elapsed_s: elapsed,
+               lights: lights.length,
+               n_frames_processed: nProcessed,
+               n_frames_failed_alignment: nFailed,
+               saved_paths: saved,
+               pixel_hashes: hashes };
+
+   // Colour, asserted rather than described. `min_bright_saturation` in the
+   // manifest is the floor this case's colour must clear; absent means the
+   // case is mono or the floor has not been established yet.
+   if (tc.min_bright_saturation !== undefined
+       && hashes.stretched_bright_saturation !== undefined
+       && hashes.stretched_bright_saturation !== null
+       && hashes.stretched_bright_saturation < tc.min_bright_saturation)
+      return { status: "fail",
+               reason: "stretched output is too close to grey: bright-2% "
+                     + "saturation " + hashes.stretched_bright_saturation.toFixed(4)
+                     + " is below the floor " + tc.min_bright_saturation.toFixed(4)
+                     + " for this case",
                elapsed_s: elapsed,
                lights: lights.length,
                n_frames_processed: nProcessed,
