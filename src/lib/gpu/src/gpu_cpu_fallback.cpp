@@ -396,7 +396,42 @@ void GPUCPUFallback::spatial_context(
             }
 
             local_background[pi] = location;
-            local_rms[pi] = mad_val * 1.4826f;  // MAD * 1.4826 ≈ σ for Gaussian
+
+            // ── Local RMS from neighbour differences ──
+            //
+            // MAD about the local median reports smooth STRUCTURE as noise: on
+            // a noiseless ramp of slope s it returns 5.93*s, and on a real sky
+            // gradient it inflates the noise by tens of percent. Differencing
+            // horizontally adjacent pixels cancels anything smooth and leaves
+            // only what changes from one pixel to the next, which is what
+            // "how noisy is this stack here" actually means.
+            //
+            // The window is gathered row-major, so entries adjacent within a
+            // row are adjacent on the image; row boundaries are skipped.
+            const int win_w = x1 - x0 + 1;
+            const int win_h = y1 - y0 + 1;
+            float diffs[225];
+            int dn = 0;
+            for (int ry = 0; ry < win_h; ry++)
+                for (int rx = 0; rx + 1 < win_w; rx++)
+                    diffs[dn++] = window[ry * win_w + rx + 1] - window[ry * win_w + rx];
+
+            float rms_val = 0.0f;
+            if (dn > 1) {
+                float sorted_d[225];
+                for (int i = 0; i < dn; i++) sorted_d[i] = diffs[i];
+                insertion_sort(sorted_d, dn);
+                const float med_d = sorted_median(sorted_d, dn);
+
+                float abs_dev_d[225];
+                for (int i = 0; i < dn; i++) abs_dev_d[i] = std::fabs(diffs[i] - med_d);
+                insertion_sort(abs_dev_d, dn);
+
+                // 1.4826 converts MAD to a Gaussian sigma; 1/sqrt(2) undoes the
+                // differencing of two independent samples.
+                rms_val = sorted_median(abs_dev_d, dn) * 1.4826f * 0.70710678f;
+            }
+            local_rms[pi] = rms_val;
         }
     }
 }
