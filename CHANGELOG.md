@@ -1,5 +1,47 @@
 # NukeX — Changelog
 
+## v5.0.5.0 — 2026-09-09
+
+### New
+
+- **NukeX now flattens the sky gradient in your stacked image.**
+  Almost every stack has a slow brightness ramp across the frame — light
+  pollution from one direction, optics, or an imperfect flat. NukeX had no
+  answer for it at all. It now measures that ramp and removes it, and tells you
+  what it took off:
+
+      Sky gradient: channel 0 -- removed a tilt of 1.470e-03 across the frame
+
+  On the 65-frame NGC7635 test set that tilt was **six times the image's own
+  pixel noise** from one corner to the other, so it is well worth removing.
+
+  Two deliberate limits, because automatic gradient removal is the classic way
+  software quietly eats real signal:
+
+  - **Only a flat tilt is removed, never a curved surface.** A curved fit can
+    follow the faint outskirts of a large nebula and subtract them. A flat one
+    cannot bend into an object.
+  - **Bright things do not pull the fit.** Stars and nebulosity are brighter
+    than sky, so the fit deliberately ignores anything sitting above the
+    background rather than letting it tilt the result.
+
+  The overall sky *level* is left exactly where it was — only the unevenness
+  goes. Your stretch behaves as before.
+
+  If you would rather do this yourself in PixInsight, the behaviour is
+  controlled by `remove_sky_gradient`.
+
+### Why per-frame correction was not the answer
+
+Measured on twelve subs, the tilt is **the same in every frame** to within a
+tenth of a single frame's noise, while the sky *level* varies more than twenty
+times as much between frames. The level is the sky changing through the night,
+which NukeX already corrects frame by frame. The tilt is a fixed property of
+the optical path, so correcting it frame by frame would achieve nothing — it
+has to come off the finished stack.
+
+**Your stacked image changes with this release.** That is the point of it.
+
 ## v5.0.4.3 — 2026-09-09
 
 ### New
