@@ -233,12 +233,25 @@ void GPUCPUFallback::select_pixels(
             double weight_sum = 0.0;
             double variance_sum = 0.0;
 
-            // Compute welford variance for fallback
+            // Across-frame fallback scale, used when a frame carries no
+            // usable GAIN/RDNOISE keywords.
+            //
+            // Welford variance is NOT robust: a single satellite trail or
+            // cosmic ray inflates it, so the PREDICTED noise rises to meet
+            // whatever the estimator actually produced and the
+            // measured-vs-predicted check goes blind to estimator-injected
+            // noise. Kernel 2 has already computed a robust MAD for this
+            // voxel-channel, so use it, and keep Welford only where the robust
+            // scale is degenerate (identical samples, or too few to form one).
             float w_M2 = buf.welford_M2[ch * B + vi];
             uint32_t w_n = buf.welford_n[ch * B + vi];
             float welford_var = (w_n > 1)
                 ? std::max(0.0f, w_M2) / static_cast<float>(w_n - 1)
                 : 0.0f;
+            const float robust_sigma = buf.mad_out[ch * B + vi] * 1.4826f;
+            const float fallback_var = (robust_sigma > 0.0f)
+                                     ? robust_sigma * robust_sigma
+                                     : welford_var;
 
             for (int fi = 0; fi < nf; fi++) {
                 float w = buf.pixel_weights[ch * N * B + fi * B + vi];
@@ -268,7 +281,7 @@ void GPUCPUFallback::select_pixels(
                     float read_var = (rn * rn) / (g * g);
                     sigma2 = a * a * (shot_var + read_var) / (65535.0f * 65535.0f);
                 } else {
-                    sigma2 = welford_var;
+                    sigma2 = fallback_var;
                 }
 
                 weight_sum += static_cast<double>(w);

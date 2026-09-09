@@ -215,6 +215,46 @@ TEST_CASE("CPU Fallback: select_pixels produces valid output", "[gpu][fallback]"
     }
 }
 
+TEST_CASE("CPU Fallback: predicted noise uses a robust scale, not Welford",
+          "[gpu][fallback]") {
+    // Without GAIN/RDNOISE keywords the noise model falls back to an
+    // across-frame scale. Welford variance is NOT robust: one satellite trail
+    // or cosmic ray inflates it, the predicted noise rises to meet whatever
+    // the estimator produced, and the measured/predicted check goes blind.
+    //
+    // 21 samples: ten at 0.49, ten at 0.51, one outlier at 0.90.
+    //   median 0.51, MAD 0.02  -> robust sigma = 0.02 * 1.4826 = 0.0296520
+    //   predicted = sigma / sqrt(21)             = 0.0064707
+    // Welford on the same samples gives sigma 0.0878584, i.e. 0.0191723 --
+    // 3x larger, and driven entirely by the one bad sample.
+    const int B = 1, C = 1, N = 21;
+    ShadowBuffers buf;
+    buf.allocate(B, C, N);
+
+    for (int fi = 0; fi < N; fi++) {
+        const float v = (fi < 10) ? 0.49f : (fi < 20 ? 0.51f : 0.90f);
+        buf.pixel_values[fi * B] = v;
+        buf.pixel_weights[fi * B] = 1.0f;
+    }
+    buf.n_frames[0] = static_cast<uint16_t>(N);
+    buf.dist_true_signal[0] = 0.51f;
+
+    // Welford of that sample set, computed exactly.
+    buf.welford_mean[0] = 0.5190476f;
+    buf.welford_M2[0]   = 0.1543810f;
+    buf.welford_n[0]    = static_cast<uint32_t>(N);
+    // Robust scale from kernel 2.
+    buf.mad_out[0]      = 0.02f;
+
+    // No noise keywords -> the across-frame fallback is what runs.
+    auto fs = make_frame_stats(N);
+    for (int i = 0; i < N; i++) fs[i].has_noise_keywords = false;
+
+    GPUCPUFallback::select_pixels(buf, fs.data(), B, C, N);
+
+    REQUIRE(buf.noise_sigma[0] == Catch::Approx(0.0064707f).epsilon(0.02));
+}
+
 // ══════════════════════════════════════════════════════════
 // Kernel 4: spatial_context
 // ══════════════════════════════════════════════════════════
