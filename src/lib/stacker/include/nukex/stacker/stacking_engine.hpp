@@ -86,6 +86,16 @@ public:
         /// against a golden, which is how it was validated.
         bool                  normalize_frames = true;
 
+        /// Remove the fixed-pattern sky tilt from the stacked output.
+        ///
+        /// Per-frame normalisation cannot reach this. Measured on a 65-frame
+        /// NGC7635 set, the per-frame TILT is identical across frames to within
+        /// 0.05-0.10 of one frame's noise while the per-frame LEVEL varies by
+        /// 2.3x that: the level is sky, the tilt is fixed pattern, and stacking
+        /// preserves it. A PLANE only -- a higher-order surface can follow a
+        /// large nebula's outskirts and subtract real signal.
+        bool                  remove_sky_gradient = true;
+
         /// Whether normalisation may rescale a frame, or only re-level it.
         ///
         /// OFF by default, on measurement. The additive half removes the
