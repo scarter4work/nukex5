@@ -61,6 +61,7 @@ nukex_add_test(test_frame_normalization unit/calibration/test_frame_normalizatio
 nukex_add_test(test_qe_update unit/calibration/test_qe_update.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_qe_update_state unit/calibration/test_qe_update_state.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_background_neutralization unit/calibration/test_background_neutralization.cpp nukex4_calibration nukex4_io nukex4_core)
+nukex_add_test(test_background_gradient unit/calibration/test_background_gradient.cpp nukex4_calibration nukex4_io nukex4_core)
 nukex_add_test(test_robust_stats  unit/fitting/test_robust_stats.cpp   nukex4_fitting)
 nukex_add_test(test_student_t  unit/fitting/test_student_t_fitter.cpp  nukex4_fitting)
 nukex_add_test(test_gmm        unit/fitting/test_gmm_fitter.cpp       nukex4_fitting)

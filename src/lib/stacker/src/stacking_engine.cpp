@@ -33,6 +33,7 @@
 #include "nukex/fitting/model_selector.hpp"
 #include "nukex/fitting/robust_stats.hpp"
 #include "nukex/combine/pixel_selector.hpp"
+#include "nukex/calibration/background_gradient.hpp"
 #include "nukex/combine/spatial_context.hpp"
 #include "nukex/combine/output_assembler.hpp"
 #include "nukex/gpu/gpu_executor.hpp"
@@ -1254,6 +1255,31 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     if (obs.is_cancelled()) {
         obs.message("Cancelled during distribution fitting.");
         return result;
+    }
+
+    // ═══ Sky gradient ════════════════════════════════════════════════
+    //
+    // Applied before Phase C so the spatial context, the measured-noise map
+    // and the Q-solved derived slots all see the flattened sky. Only the tilt
+    // comes off; the sky LEVEL is left alone because the auto-stretch reads it
+    // as its shadow target.
+    if (config_.remove_sky_gradient && !stacked.empty()) {
+        for (int ch = 0; ch < stacked.n_channels(); ch++) {
+            const GradientModel m = BackgroundGradient::fit_planar(stacked, ch);
+            if (!m.valid) {
+                obs.message("Sky gradient: channel " + std::to_string(ch)
+                            + " -- too little background to fit, left as is.");
+                continue;
+            }
+            const double amp = BackgroundGradient::amplitude(m);
+            BackgroundGradient::subtract(stacked, ch, m);
+            char msg[192];
+            std::snprintf(msg, sizeof(msg),
+                          "Sky gradient: channel %d -- removed a tilt of %.3e "
+                          "across the frame (dx %+.3e, dy %+.3e)",
+                          ch, amp, m.dx, m.dy);
+            obs.message(msg);
+        }
     }
 
     // Post-processing: dominant shape + quality scores + spatial context
