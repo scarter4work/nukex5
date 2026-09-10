@@ -196,9 +196,10 @@ TEST_CASE("ColorComposer: a pixel above the chroma gate keeps full saturation",
     c.compose_pixel(s);
 
     REQUIRE(c.last_pixel_chroma_scale() == Catch::Approx(1.0));
-    // Pure Ha normalises to exactly the palette entry.
-    REQUIRE(c.last_pixel_emission_a() == Catch::Approx(50.0).margin(1e-9));
-    REQUIRE(c.last_pixel_emission_b() == Catch::Approx(10.0).margin(1e-9));
+    // Pure Ha normalises to exactly the palette entry, whatever it is.
+    const LabColor ha = Palette::for_line(EmissionLineId::Ha);
+    REQUIRE(c.last_pixel_emission_a() == Catch::Approx(ha.a).margin(1e-9));
+    REQUIRE(c.last_pixel_emission_b() == Catch::Approx(ha.b).margin(1e-9));
 }
 
 TEST_CASE("ColorComposer: sky at the measured background is desaturated",
