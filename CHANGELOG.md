@@ -1,5 +1,80 @@
 # NukeX — Changelog
 
+## v5.0.5.1 — 2026-09-10
+
+### Fixed
+
+- **The noise check's three numbers now agree with each other.** On a colour
+  stack the console line printed a measured noise, a predicted noise, and a
+  ratio that was not the quotient of the two: M27 printed 3.732e-05 over
+  3.544e-05 as "1.28x" when dividing them gives 1.05, and M16 printed a
+  measured value *below* its prediction with a ratio of 1.19x. The printed
+  prediction was one channel's median while the ratio used a luminance
+  combination of all three. Both now share one basis. Mono stacks were never
+  affected. Console text only — no image changes.
+
+- **The sky-gradient switch the 5.0.5.0 notes described now exists.** Those
+  notes said the behaviour "is controlled by `remove_sky_gradient`"; that was
+  true only inside the engine, where no user could reach it. It is now a
+  process parameter, `removeSkyGradient`, shown in Options as **Remove sky
+  gradient (tilt only)**. Default on, so nothing changes unless you turn it
+  off — which keeps the stack exactly as accumulated, for anyone who prefers
+  to remove gradients in PixInsight where they can see what goes.
+
+- **The sky-tilt fit no longer follows a bright object.** Measured on a
+  synthetic sky, an object with its own brightness ramp covering 30% of the
+  frame on one side dragged the 5.0.5.0 fit to a tilt of 0.26 where the truth
+  was zero -- and the subtraction then took that ramp out of real signal. The
+  fit now starts from the darkest part of the frame, which is always sky, and
+  judges its scatter only on what it keeps. It is correct to within 0.0004 with
+  an object covering 30, 55, 80 and 85% of the frame. At 90% there is no sky
+  left to fit and no automatic method is safe; that is what the new switch is
+  for.
+
+- **The tilt fit ignores the thin-coverage rim.** The 5.0.5.0 fit sampled the
+  whole stack, including the noisy border that the coverage trim removes, and
+  that border sits exactly where a plane is most sensitive. The fit now samples
+  only the region every frame contributed to.
+
+- **The tilt figure in the console is now the true corner-to-corner range**
+  (|dx| + |dy|). 5.0.5.0 printed the vector length, which understates a
+  diagonal tilt by up to 41%. On NGC7635 the corrected fit reports
+  1.282e-03 corner to corner (dx +9.3e-05, dy +1.19e-03) where 5.0.5.0
+  printed 1.334e-03 for a fit that included the frame's rim.
+
+- **The measured noise is now the noise of a pixel, not of a pixel pair.**
+  5.0.4.3 measured scatter between adjacent pixels, which assumes they vary
+  independently. On a real stack they do not: debayering blends neighbours and
+  alignment resamples every frame, so adjacent pixels move together and the
+  measurement came out up to 45% low on OSC data (measured: the estimate keeps
+  rising until pixels eight apart are compared, then levels off). The
+  NukeX_measured_noise window and the Noise check now compare pixels eight
+  apart. **Expect the reported ratio to rise.** Measured on the same stacks
+  before and after: mono NGC7635 1.06x -> 1.24x, LRGB-mono M27 1.39x -> 1.61x,
+  dual-narrowband M16 1.19x -> 1.49x, 24 MP OSC M27 1.28x -> 2.62x. That is the
+  instrument finally saying what it was built to say; the noise itself has not
+  changed. A ratio well above 1 means the per-pixel estimator is adding noise
+  of its own, which is a known open question in NukeX's model race and now has
+  a number attached.
+
+- **The console says which noise model ran.** Before the Noise check, NukeX now
+  reports how many frames carried usable gain and read-noise keywords. Without
+  them the prediction is the across-frame scale, and a reader should know
+  which of the two they are looking at.
+
+- **A ZWO or QHY camera's GAIN is treated as a menu setting whatever its
+  value.** 5.0.4.3 rejected GAIN above 25 as a menu index but accepted a low
+  setting such as 10 as 10 electrons per ADU, a tenfold error in the noise
+  model. The camera name now decides: on these cameras only EGAIN is
+  electronic gain.
+
+- The updater's package description had not been updated since 5.0.4.1; it
+  now describes 5.0.4.3, 5.0.5.0 and this release.
+
+**Your stacked image changes with this release** wherever the old tilt fit was
+biased by a bright object or by the frame's rim. Where it was not, the change
+is at the level of the fit's own noise.
+
 ## v5.0.5.0 — 2026-09-09
 
 ### New
@@ -11,6 +86,8 @@
   what it took off:
 
       Sky gradient: channel 0 -- removed a tilt of 1.334e-03 across the frame (dx +3.330e-04, dy +1.292e-03)
+
+  (5.0.5.1 fits this differently and reports 1.282e-03 corner to corner; see its notes.)
 
   On the 65-frame NGC7635 test set that tilt was **six times the image's own
   pixel noise** from one corner to the other, so it is well worth removing.
