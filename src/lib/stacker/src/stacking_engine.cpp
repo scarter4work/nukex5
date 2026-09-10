@@ -33,6 +33,7 @@
 #include "nukex/fitting/model_selector.hpp"
 #include "nukex/fitting/robust_stats.hpp"
 #include "nukex/calibration/background_gradient.hpp"
+#include "nukex/stacker/cache_paths.hpp"
 #include "nukex/combine/output_assembler.hpp"
 #include "nukex/gpu/gpu_executor.hpp"
 
@@ -499,17 +500,42 @@ StackingEngine::ExecuteResult StackingEngine::execute(
         return err;
     }
 
-    // Allocate cube
-    Cube cube(out_width, out_height, ch_config);
+    if (path_is_ram_backed(config_.cache_dir)) {
+        obs.message("WARNING: cache directory " + config_.cache_dir +
+                    " is on a RAM-backed filesystem (tmpfs). The frame cache and "
+                    "the voxel record will live in memory, which is exactly what "
+                    "they exist to avoid -- a 33-frame 24 MP session writes 13 GB "
+                    "of cache. Choose a directory on a disk in the NukeX interface.");
+    }
+
+    // Allocate cube -- file-backed in the cache directory when possible.
+    Cube cube;
+    std::string cube_backing;
+    if (config_.file_backed_cube) {
+        try {
+            cube = Cube(out_width, out_height, ch_config, config_.cache_dir);
+            cube_backing = "file-backed in " + config_.cache_dir;
+        } catch (const std::exception& e) {
+            obs.message(std::string("Voxel record: file backing unavailable (") + e.what()
+                        + "); holding it in memory instead.");
+        }
+    }
+    if (!cube.file_backed()) {
+        cube = Cube(out_width, out_height, ch_config);
+        cube_backing = "in memory";
+    }
     {
         // The single number that decides whether this run fits in RAM. Each
         // voxel is sized to the stack's real channel count, so this scales
-        // with n_channels rather than the MAX_CHANNELS ceiling.
-        char msg[192];
+        // with n_channels rather than the MAX_CHANNELS ceiling. File-backed,
+        // its pages are page cache the kernel can drop and re-read; in
+        // memory, they are what the machine has to swap.
+        char msg[256];
         std::snprintf(msg, sizeof(msg),
-                      "Voxel record: %.2f GB (%dx%d px x %d channels, %zu B/voxel)",
+                      "Voxel record: %.2f GB (%dx%d px x %d channels, %zu B/voxel), %s",
                       static_cast<double>(cube.bytes_allocated()) / 1e9,
-                      out_width, out_height, n_ch, cube.voxel_stride());
+                      out_width, out_height, n_ch, cube.voxel_stride(),
+                      cube_backing.c_str());
         obs.message(msg);
     }
 

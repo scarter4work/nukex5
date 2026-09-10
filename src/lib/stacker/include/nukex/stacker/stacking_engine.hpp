@@ -40,6 +40,14 @@ public:
         ModelSelector::Config fitting_config;
         std::string           cache_dir = "/tmp";
 
+        /// Keep the voxel record in a mapped, unlinked file under cache_dir
+        /// instead of anonymous memory. At 604 B/voxel a 24 MP 4-channel
+        /// stack is 14.8 GB; as heap that is what pushed a 30 GB machine
+        /// into swap. File-backed pages are dropped and re-read under
+        /// pressure rather than swapped. Falls back to memory, with a
+        /// message, if the file cannot be created.
+        bool                  file_backed_cube = true;
+
         /// Path to the shipped QE database JSON. The default resolves at
         /// startup relative to the working directory; in a PI module install
         /// that becomes <plugin>/share/qe_database.json, which is correct.

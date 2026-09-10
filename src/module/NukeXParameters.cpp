@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Scott Carter. MIT License.
 
 #include "NukeXParameters.h"
+#include "nukex/stacker/cache_paths.hpp"
 
 namespace pcl
 {
@@ -161,7 +162,12 @@ NXCacheDirectory::NXCacheDirectory( MetaProcess* p ) : MetaString( p )
 }
 
 IsoString NXCacheDirectory::Id() const { return "cacheDirectory"; }
-String NXCacheDirectory::DefaultValue() const { return "/tmp"; }
+String NXCacheDirectory::DefaultValue() const
+{
+   // Never /tmp: on Fedora and most systemd distributions it is a RAM-backed
+   // tmpfs, so a frame cache there is memory. See nukex::default_cache_dir.
+   return String( nukex::default_cache_dir().c_str() );
+}
 
 // ── QE Override Path ─────────────────────────────────────────────
 

@@ -8,6 +8,7 @@
 #include <pcl/MetaParameter.h>
 
 #include "nukex/stretch/image_stats.hpp"
+#include "nukex/stacker/cache_paths.hpp"
 
 #include <array>
 #include <cstdint>
@@ -66,7 +67,7 @@ public:
    // level is untouched). See StackingEngine::Config::remove_sky_gradient.
    pcl_bool    removeSkyGradient = true;
    pcl_bool    enableGPU       = true;
-   String      cacheDirectory  = "/tmp";
+   String      cacheDirectory  = String( nukex::default_cache_dir().c_str() );
    String      qeOverridePath;  // optional path to qe_overrides.json; empty = none
 
    // Output (populated by ExecuteGlobal, readable from PJSR).

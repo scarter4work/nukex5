@@ -1,6 +1,8 @@
 #include "catch_amalgamated.hpp"
 #include "nukex/core/cube.hpp"
 #include "nukex/core/filter.hpp"
+#include <filesystem>
+#include <string>
 
 using namespace nukex;
 
@@ -117,4 +119,65 @@ TEST_CASE("Cube: fixed voxel fields survive channel writes", "[cube]") {
     REQUIRE(cube.at(1, 1).confidence == Catch::Approx(0.75f));
     REQUIRE(cube.at(1, 1).n_frames == 9);
     REQUIRE(cube.at(1, 1).channel(0).snr == Catch::Approx(0.0f));
+}
+
+// ── File-backed storage ──────────────────────────────────────────────────
+//
+// The record store can live in a mapped, already-unlinked file in the cache
+// directory instead of anonymous memory. Same layout, same at(): a change of
+// allocator. These pin that it behaves like the heap cube, survives a move,
+// and leaves nothing on disk.
+
+TEST_CASE("Cube: a file-backed cube behaves like the heap cube and leaves no file",
+          "[cube][mmap]") {
+    const auto dir = std::filesystem::temp_directory_path() / "nukex_cube_test";
+    std::filesystem::create_directories(dir);
+    for (const auto& e : std::filesystem::directory_iterator(dir)) std::filesystem::remove(e);
+
+    auto cfg = cfg_for(FilterClass::BROADBAND_OSC, "OSC");
+    {
+        Cube cube(64, 48, cfg, dir.string());
+        REQUIRE(cube.file_backed());
+        REQUIRE(cube.width == 64);
+        REQUIRE(cube.channel_config.n_channels == 4);
+        // The file is unlinked at creation: nothing to see even while mapped.
+        REQUIRE(std::filesystem::is_empty(dir));
+
+        for (int y = 0; y < 48; y++)
+            for (int x = 0; x < 64; x++) {
+                cube.at(x, y).n_frames = static_cast<uint16_t>(x + y);
+                cube.at(x, y).channel(3).snr = static_cast<float>(x) * 0.5f;
+            }
+        REQUIRE(cube.at(10, 20).n_frames == 30);
+        REQUIRE(cube.at(10, 20).channel(3).snr == Catch::Approx(5.0f));
+        REQUIRE(cube.at(63, 47).channel(0).welford.count() == 0);
+
+        // Move keeps the mapping and the contents.
+        Cube moved(std::move(cube));
+        REQUIRE(moved.file_backed());
+        REQUIRE(moved.at(10, 20).n_frames == 30);
+        REQUIRE(moved.at(10, 20).channel(3).snr == Catch::Approx(5.0f));
+        REQUIRE_FALSE(cube.file_backed());   // moved-from owns nothing
+    }
+    REQUIRE(std::filesystem::is_empty(dir));
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Cube: file backing in an unusable directory throws instead of "
+          "silently using memory", "[cube][mmap]") {
+    auto cfg = cfg_for(FilterClass::BROADBAND_L, "L");
+    REQUIRE_THROWS_AS(Cube(8, 8, cfg, "/nonexistent/nukex/dir"), std::runtime_error);
+}
+
+TEST_CASE("Cube: heap and file-backed cubes have the same footprint and stride",
+          "[cube][mmap]") {
+    const auto dir = std::filesystem::temp_directory_path() / "nukex_cube_test2";
+    std::filesystem::create_directories(dir);
+    auto cfg = cfg_for(FilterClass::BROADBAND_OSC, "OSC");
+    Cube heap(16, 16, cfg);
+    Cube mapped(16, 16, cfg, dir.string());
+    REQUIRE(heap.voxel_stride() == mapped.voxel_stride());
+    REQUIRE(heap.bytes_allocated() == mapped.bytes_allocated());
+    REQUIRE_FALSE(heap.file_backed());
+    std::filesystem::remove_all(dir);
 }

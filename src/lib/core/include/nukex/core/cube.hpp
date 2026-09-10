@@ -5,8 +5,8 @@
 #include "nukex/core/voxel.hpp"
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <new>
+#include <string>
 
 namespace nukex {
 
@@ -24,16 +24,41 @@ public:
     ChannelConfig channel_config;
     int           n_frames_loaded = 0;
 
+    /// In-memory cube: one anonymous allocation of voxel_stride() * w * h.
     Cube(int w, int h, const ChannelConfig& config);
+
+    /// File-backed cube: the same record store, mapped from a temporary file
+    /// in `backing_dir`. Everything above this class is untouched -- it is a
+    /// change of allocator, not of architecture.
+    ///
+    /// Why: at 604 B/voxel a 24 MP 4-channel stack is a 14.8 GB record, and
+    /// as anonymous memory it is the reason a 30 GB machine goes into swap
+    /// (PixInsight measured at 21 GB resident with 6 GB left). A clean
+    /// file-backed page is simply dropped under pressure and re-read later --
+    /// one I/O, often none -- where an anonymous page has to be written to
+    /// swap first and read back: two. The file is unlinked the moment it is
+    /// mapped, so a crash leaves nothing behind. Throws std::runtime_error
+    /// when the file cannot be created or mapped; the caller falls back to
+    /// memory and says so.
+    Cube(int w, int h, const ChannelConfig& config, const std::string& backing_dir);
+
     Cube() = default;
+    ~Cube();
+    Cube(Cube&& other) noexcept;
+    Cube& operator=(Cube&& other) noexcept;
+    Cube(const Cube&) = delete;
+    Cube& operator=(const Cube&) = delete;
+
+    /// True when the record store is a file mapping rather than heap.
+    bool file_backed() const { return fd_ >= 0; }
 
     SubcubeVoxel& at(int x, int y) {
         return *std::launder(reinterpret_cast<SubcubeVoxel*>(
-            storage_.get() + offset_of(x, y)));
+            storage_ + offset_of(x, y)));
     }
     const SubcubeVoxel& at(int x, int y) const {
         return *std::launder(reinterpret_cast<const SubcubeVoxel*>(
-            storage_.get() + offset_of(x, y)));
+            storage_ + offset_of(x, y)));
     }
 
     int total_pixels() const { return width * height; }
@@ -64,9 +89,14 @@ private:
                 + static_cast<std::size_t>(x)) * stride_;
     }
 
-    int                             allocated_channels_ = 0;
-    std::size_t                     stride_ = 0;
-    std::unique_ptr<std::byte[]>    storage_;
+    void construct_all();
+    void release() noexcept;
+
+    int          allocated_channels_ = 0;
+    std::size_t  stride_   = 0;
+    std::size_t  bytes_    = 0;
+    std::byte*   storage_  = nullptr;
+    int          fd_       = -1;      ///< backing file, or -1 for heap
 };
 
 } // namespace nukex

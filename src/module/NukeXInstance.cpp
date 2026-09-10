@@ -458,9 +458,21 @@ bool NukeXInstance::Validate( String& whyNot )
          IsoString cache_utf8 = cache.ToUTF8();
          const char* p = cache_utf8.c_str();
          struct stat st;
-         if ( ::stat( p, &st ) != 0 || !S_ISDIR( st.st_mode ) )
+         if ( ::stat( p, &st ) != 0 )
          {
-            whyNot = "Cache directory does not exist or is not a directory: " + cache;
+            // The default is $HOME/.cache/nukex4/cache, which need not exist
+            // yet on a fresh install; create it rather than refuse to run.
+            std::error_code ec;
+            std::filesystem::create_directories( p, ec );
+            if ( ec || ::stat( p, &st ) != 0 )
+            {
+               whyNot = "Cache directory does not exist and could not be created: " + cache;
+               return false;
+            }
+         }
+         if ( !S_ISDIR( st.st_mode ) )
+         {
+            whyNot = "Cache directory is not a directory: " + cache;
             return false;
          }
          if ( ::access( p, W_OK ) != 0 )
