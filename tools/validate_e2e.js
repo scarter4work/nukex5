@@ -365,24 +365,10 @@ function runPrimary(tc, out_dir, manifest) {
                saved_paths: saved,
                pixel_hashes: hashes };
 
-   // Colour, asserted rather than described. `min_bright_saturation` in the
-   // manifest is the floor this case's colour must clear; absent means the
-   // case is mono or the floor has not been established yet.
-   if (tc.min_bright_saturation !== undefined
-       && hashes.stretched_bright_saturation !== undefined
-       && hashes.stretched_bright_saturation !== null
-       && hashes.stretched_bright_saturation < tc.min_bright_saturation)
-      return { status: "fail",
-               reason: "stretched output is too close to grey: bright-2% "
-                     + "saturation " + hashes.stretched_bright_saturation.toFixed(4)
-                     + " is below the floor " + tc.min_bright_saturation.toFixed(4)
-                     + " for this case",
-               elapsed_s: elapsed,
-               lights: lights.length,
-               n_frames_processed: nProcessed,
-               n_frames_failed_alignment: nFailed,
-               saved_paths: saved,
-               pixel_hashes: hashes };
+   // Colour is asserted in runCase as a check beside the others, not here as
+   // an early exit: failing it must not skip the golden compare, the alignment
+   // floor, the sweeps or regen -- a colour regression and a stacking
+   // regression are different facts, and the harness has to report both.
 
    return {
       status:                    "ok",
@@ -491,6 +477,28 @@ function runCase(tc, manifest, out_root, regen, golden_dir) {
       checks.n_frames_ok_alignment      = n_ok;
       checks.min_frames_ok_alignment    = floor;
       checks.alignment_all_ok           = (n_ok >= floor);
+   }
+
+   // Check 5c: colour floor. `min_bright_saturation` in the manifest is the
+   // floor this case's stretched output must clear. A case that declares a
+   // floor and gets no measurement (brightSaturation threw, or returned null
+   // on a mono window) FAILS: a floor nobody measured is not a passed floor.
+   if (tc.min_bright_saturation !== undefined) {
+      var sat = primary.pixel_hashes ? primary.pixel_hashes.stretched_bright_saturation : undefined;
+      checks.min_bright_saturation = tc.min_bright_saturation;
+      if (typeof sat !== "number" || sat !== sat) {
+         checks.bright_saturation = null;
+         checks.colour_floor_ok = false;
+         checks.colour_floor_reason = "declared a colour floor but no saturation was measured: "
+            + (primary.pixel_hashes && primary.pixel_hashes.saturation_error
+                  ? primary.pixel_hashes.saturation_error : "brightSaturation returned " + sat);
+      } else {
+         checks.bright_saturation = sat;
+         checks.colour_floor_ok = sat >= tc.min_bright_saturation;
+         if (!checks.colour_floor_ok)
+            checks.colour_floor_reason = "stretched output is too close to grey: bright-2% saturation "
+               + sat.toFixed(4) + " is below the floor " + tc.min_bright_saturation.toFixed(4);
+      }
    }
 
    // Check 6: dropdown sweep
@@ -603,7 +611,8 @@ function runCase(tc, manifest, out_root, regen, golden_dir) {
                    && checks.sweep_all_ok
                    && (sweep_results.length === 0 || checks.sweep_distinct)
                    && (checks.golden_match !== false)
-                   && (checks.alignment_all_ok !== false);
+                   && (checks.alignment_all_ok !== false)
+                   && (checks.colour_floor_ok !== false);
 
    return {
       name:         tc.name,
