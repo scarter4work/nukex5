@@ -1,5 +1,34 @@
 # NukeX — Changelog
 
+## v5.0.5.2 — 2026-09-10
+
+### Fixed
+
+- **Dual-narrowband stacks have their colour back.** Since 5.0.3.2 the
+  stretched image of an Ha/OIII stack came out nearly grey: on M16 the
+  brightest 2% of pixels measured a saturation of 0.011, against 0.085 to
+  0.095 before. Two things were happening, both measured on the outputs rather
+  than assumed. The composed image is built at the data's own linear
+  brightness, where an emission signal of 0.05 is a lightness of 4 on a scale
+  of 100: dark with a tint, not white-clipped and not walked to grey as the
+  earlier notes said. Then the colour stretch blends every bright pixel toward
+  neutral by the 3.5th power of its brightness — meant for star cores, but a
+  nebula the stretch has just made bright qualifies too.
+
+  Emission-line stacks now stretch their *lightness* alone and compose the
+  colour at the stretched lightness. Hue and saturation still come from the
+  linear line ratios through the chroma gate, exactly as before, so sky stays
+  neutral and colour does not depend on brightness; only the lightness moves,
+  and the sRGB gamut is applied once, there. Measured on M16: saturation
+  0.322. Broadband stacks are untouched, and the composed window is unchanged.
+
+  One thing to know about the palette: Ha alone is red and OIII alone is
+  blue-teal, and where OIII is 40% or more of the emission the blend is
+  magenta. That is the palette's arithmetic, unchanged by this release.
+
+**Your stacked image is unchanged. The stretched image of emission-line
+stacks changes.**
+
 ## v5.0.5.1 — 2026-09-10
 
 ### Fixed
