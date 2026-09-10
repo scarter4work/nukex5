@@ -36,6 +36,7 @@
 #include "nukex/stacker/cache_paths.hpp"
 #include "nukex/combine/output_assembler.hpp"
 #include "nukex/gpu/gpu_executor.hpp"
+#include "nukex/gpu/gpu_context.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -508,21 +509,44 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                     "of cache. Choose a directory on a disk in the NukeX interface.");
     }
 
-    // Allocate cube -- file-backed in the cache directory when possible.
+    // Allocate cube -- file-backed in the cache directory when it would
+    // crowd memory, in memory otherwise (the file costs ~30% wall time on a
+    // 24 MP stack, measured; swapping costs far more).
     Cube cube;
     std::string cube_backing;
-    if (config_.file_backed_cube) {
-        try {
-            cube = Cube(out_width, out_height, ch_config, config_.cache_dir);
-            cube_backing = "file-backed in " + config_.cache_dir;
-        } catch (const std::exception& e) {
-            obs.message(std::string("Voxel record: file backing unavailable (") + e.what()
-                        + "); holding it in memory instead.");
+    {
+        const std::size_t need = voxel_record_size(ch_config.n_channels)
+                               * static_cast<std::size_t>(out_width)
+                               * static_cast<std::size_t>(out_height);
+        const std::size_t avail = GPUContext::host_available_bytes();
+        const bool crowds = avail > 0 &&
+            static_cast<double>(need) > config_.file_backed_cube_fraction * static_cast<double>(avail);
+        if (config_.file_backed_cube && crowds) {
+            try {
+                cube = Cube(out_width, out_height, ch_config, config_.cache_dir);
+                char why[160];
+                std::snprintf(why, sizeof(why),
+                              "file-backed in %s (%.0f%% of the %.1f GB available)",
+                              config_.cache_dir.c_str(),
+                              100.0 * static_cast<double>(need) / static_cast<double>(avail),
+                              static_cast<double>(avail) / 1e9);
+                cube_backing = why;
+            } catch (const std::exception& e) {
+                obs.message(std::string("Voxel record: file backing unavailable (") + e.what()
+                            + "); holding it in memory instead.");
+            }
         }
-    }
-    if (!cube.file_backed()) {
-        cube = Cube(out_width, out_height, ch_config);
-        cube_backing = "in memory";
+        if (!cube.file_backed()) {
+            cube = Cube(out_width, out_height, ch_config);
+            char why[160];
+            if (avail > 0)
+                std::snprintf(why, sizeof(why), "in memory (%.0f%% of the %.1f GB available)",
+                              100.0 * static_cast<double>(need) / static_cast<double>(avail),
+                              static_cast<double>(avail) / 1e9);
+            else
+                std::snprintf(why, sizeof(why), "in memory");
+            cube_backing = why;
+        }
     }
     {
         // The single number that decides whether this run fits in RAM. Each

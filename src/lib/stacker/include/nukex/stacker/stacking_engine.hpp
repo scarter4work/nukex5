@@ -41,12 +41,16 @@ public:
         std::string           cache_dir = "/tmp";
 
         /// Keep the voxel record in a mapped, unlinked file under cache_dir
-        /// instead of anonymous memory. At 604 B/voxel a 24 MP 4-channel
-        /// stack is 14.8 GB; as heap that is what pushed a 30 GB machine
-        /// into swap. File-backed pages are dropped and re-read under
-        /// pressure rather than swapped. Falls back to memory, with a
-        /// message, if the file cannot be created.
+        /// when it would crowd memory. At 604 B/voxel a 24 MP 4-channel
+        /// stack is 14.8 GB; as heap that is what pushed a 30 GB machine to
+        /// 6 GB available and into swap. File-backed, the same run kept
+        /// 18 GB available and produced bit-identical output -- but took 30%
+        /// longer (827 s against 640 s), so the file is used only when the
+        /// record exceeds `file_backed_cube_fraction` of the memory available
+        /// at allocation. A record that fits stays in memory at full speed.
+        /// Falls back to memory, with a message, if the file cannot be made.
         bool                  file_backed_cube = true;
+        double                file_backed_cube_fraction = 0.5;
 
         /// Path to the shipped QE database JSON. The default resolves at
         /// startup relative to the working directory; in a PI module install
