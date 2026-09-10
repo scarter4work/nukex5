@@ -355,7 +355,9 @@ void GPUExecutor::execute_select_gpu(
 
 void GPUExecutor::execute_spatial_gpu(
     const Image& stacked,
-    float* gradient_mag, float* local_background, float* local_rms) {
+    float* gradient_mag, float* local_background, float* local_rms,
+    LuminanceSpec luminance) {
+    luminance = luminance.resolved(stacked.n_channels());
 
     if (!kernels_.is_compiled()) {
         GPUCPUFallback::spatial_context(stacked.data(), stacked.width(),
@@ -381,6 +383,11 @@ void GPUExecutor::execute_spatial_gpu(
     clSetKernelArg(k, arg++, sizeof(int), &W);
     clSetKernelArg(k, arg++, sizeof(int), &H);
     clSetKernelArg(k, arg++, sizeof(int), &C);
+    int lum_mode = luminance.mode, lum_c0 = luminance.c0, lum_c1 = luminance.c1, lum_c2 = luminance.c2;
+    clSetKernelArg(k, arg++, sizeof(int), &lum_mode);
+    clSetKernelArg(k, arg++, sizeof(int), &lum_c0);
+    clSetKernelArg(k, arg++, sizeof(int), &lum_c1);
+    clSetKernelArg(k, arg++, sizeof(int), &lum_c2);
     clSetKernelArg(k, arg++, sizeof(cl_mem), &d_grad);
     clSetKernelArg(k, arg++, sizeof(cl_mem), &d_bg);
     clSetKernelArg(k, arg++, sizeof(cl_mem), &d_rms);
@@ -579,22 +586,24 @@ void GPUExecutor::execute_phase_b(
 void GPUExecutor::execute_spatial_context(
     const Image& stacked,
     Cube& cube,
-    ProgressObserver* progress) {
+    ProgressObserver* progress,
+    LuminanceSpec luminance) {
 
     ProgressObserver& obs = progress ? *progress : null_progress_observer();
 
     int w = stacked.width();
     int h = stacked.height();
     int nc = stacked.n_channels();
+    const LuminanceSpec lum = luminance.resolved(nc);
 
     std::vector<float> grad(w * h), bg(w * h), rms(w * h);
 
     bool use_gpu = context_.is_gpu_available() && kernels_.is_compiled();
     if (use_gpu) {
-        execute_spatial_gpu(stacked, grad.data(), bg.data(), rms.data());
+        execute_spatial_gpu(stacked, grad.data(), bg.data(), rms.data(), lum);
     } else {
         GPUCPUFallback::spatial_context(stacked.data(), w, h, nc,
-                                         grad.data(), bg.data(), rms.data());
+                                         grad.data(), bg.data(), rms.data(), lum);
     }
 
     // Write back to voxels

@@ -1297,8 +1297,41 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     if (config_.remove_sky_gradient && !stacked.empty()) {
         const FitRegion region{coverage.x0, coverage.y0, coverage.x1, coverage.y1};
         const FitRegion* roi = coverage.applied ? &region : nullptr;
-        for (int ch = 0; ch < stacked.n_channels(); ch++) {
-            const GradientModel m = BackgroundGradient::fit_planar(stacked, ch, roi);
+        const int nch = stacked.n_channels();
+        std::vector<GradientModel> models(nch);
+
+        // A synthesized L slot (OSC: 0.299 R + 0.587 G + 0.114 B per frame) is
+        // not fitted on its own. Its tilt IS that combination of the R, G and
+        // B tilts, and fitting it separately -- with its own seed and its own
+        // clipped sample set -- removed a slightly different plane, so the
+        // luminance the composer reads no longer matched the chroma planes
+        // beside it. Physical slots are fitted first; the synthesized one
+        // takes the combination.
+        auto is_synth_L = [&](int ch) {
+            return ch < static_cast<int>(slot_cache_refs.size())
+                && slot_cache_refs[ch].kind == SlotSynthesis::REC709_LUMA
+                && cube.channel_config.slot_name(ch) == "L";
+        };
+        for (int ch = 0; ch < nch; ch++) {
+            if (is_synth_L(ch)) continue;
+            models[ch] = BackgroundGradient::fit_planar(stacked, ch, roi);
+        }
+        for (int ch = 0; ch < nch; ch++) {
+            if (!is_synth_L(ch)) continue;
+            const int r = cube.channel_config.slot_index("R");
+            const int g = cube.channel_config.slot_index("G");
+            const int b = cube.channel_config.slot_index("B");
+            if (r >= 0 && g >= 0 && b >= 0 && r < nch && g < nch && b < nch &&
+                models[r].valid && models[g].valid && models[b].valid) {
+                GradientModel& m = models[ch];
+                m.dx = 0.299 * models[r].dx + 0.587 * models[g].dx + 0.114 * models[b].dx;
+                m.dy = 0.299 * models[r].dy + 0.587 * models[g].dy + 0.114 * models[b].dy;
+                m.level = 0.299 * models[r].level + 0.587 * models[g].level + 0.114 * models[b].level;
+                m.valid = true;
+            }
+        }
+        for (int ch = 0; ch < nch; ch++) {
+            const GradientModel& m = models[ch];
             if (!m.valid) {
                 obs.message("Sky gradient: channel " + std::to_string(ch)
                             + " -- too little background to fit, left as is.");
@@ -1306,11 +1339,12 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             }
             const double amp = BackgroundGradient::amplitude(m);
             BackgroundGradient::subtract(stacked, ch, m);
-            char msg[192];
+            char msg[224];
             std::snprintf(msg, sizeof(msg),
-                          "Sky gradient: channel %d -- removed a tilt of %.3e "
+                          "Sky gradient: channel %d%s -- removed a tilt of %.3e "
                           "corner to corner (dx %+.3e, dy %+.3e)",
-                          ch, amp, m.dx, m.dy);
+                          ch, is_synth_L(ch) ? " (synthesized L: rec709 of the R, G, B tilts)" : "",
+                          amp, m.dx, m.dy);
             obs.message(msg);
         }
     }
@@ -1344,7 +1378,11 @@ StackingEngine::ExecuteResult StackingEngine::execute(
 
     // Spatial context (GPU kernel 4)
     obs.advance(0, "spatial context");
-    gpu.execute_spatial_context(stacked, cube, &obs);
+    // The luminance the spatial kernel measures noise on, by slot NAME: the
+    // L plane when there is one, else R, G, B by name, else positional.
+    const LuminanceSpec noise_luminance =
+        LuminanceSpec::for_config(cube.channel_config, stacked.n_channels());
+    gpu.execute_spatial_context(stacked, cube, &obs, noise_luminance);
     obs.advance(1);
 
     obs.end_phase();
@@ -1646,7 +1684,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // quotient, so a reader who divides gets the number on the line.
     {
         const OutputAssembler::NoiseCheck nc =
-            OutputAssembler::noise_check(measured_noise, noise_map);
+            OutputAssembler::noise_check(measured_noise, noise_map, noise_luminance);
         if (nc.comparable) {
             // Which basis the prediction stands on. The CCD model needs gain
             // AND read noise from the FITS header; without them a frame's
@@ -1664,9 +1702,10 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                           with_keywords, frame_stats.size());
             obs.message(msg);
             std::snprintf(msg, sizeof(msg),
-                          "Noise check: measured %.3e, predicted %.3e, "
+                          "Noise check on %s: measured %.3e, predicted %.3e, "
                           "ratio %.2fx (1.00x means the stack is as clean as "
                           "its model says)",
+                          noise_luminance.describe(&cube.channel_config).c_str(),
                           nc.measured_median, nc.predicted_median, nc.ratio);
             obs.message(msg);
         }

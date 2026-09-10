@@ -3,6 +3,7 @@
 #include "nukex/gpu/gpu_shadow_buffers.hpp"
 #include "nukex/core/frame_stats.hpp"
 #include "nukex/classify/weight_computer.hpp"
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <iostream>
@@ -380,6 +381,53 @@ TEST_CASE("CPU Fallback: local_rms recovers a known noise sigma", "[gpu][fallbac
     // 15% tolerance: a 15x15 window gives ~200 difference pairs, so the MAD of
     // those differences carries real sampling scatter.
     REQUIRE(mean_rms == Catch::Approx(sigma).epsilon(0.15));
+}
+
+TEST_CASE("CPU Fallback: local_rms equals the brute-force sorted estimator exactly",
+          "[gpu][fallback]") {
+    // The kernel takes the pooled median of |d - median| without sorting the
+    // deviations (two-pointer walks and a merge). It must equal the sorted
+    // version to the bit, on data with ties and with structure.
+    const int W = 40, H = 36, C = 1;
+    std::mt19937 rng(77);
+    std::normal_distribution<float> gauss(0.0f, 0.02f);
+    std::vector<float> stacked(W * H);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            float v = 0.3f + 0.002f * x + gauss(rng);
+            if ((x + y) % 7 == 0) v = 0.31f;              // ties
+            stacked[y * W + x] = v;
+        }
+    std::vector<float> grad(W * H), bg(W * H), rms(W * H);
+    GPUCPUFallback::spatial_context(stacked.data(), W, H, C,
+                                     grad.data(), bg.data(), rms.data());
+
+    auto sorted_median = [](std::vector<float> v) {
+        std::sort(v.begin(), v.end());
+        const int n = static_cast<int>(v.size());
+        return (n % 2 == 1) ? v[n / 2] : 0.5f * (v[n / 2 - 1] + v[n / 2]);
+    };
+    const int R = 7, LAG = 8;
+    for (int y = 0; y < H; y += 5)
+        for (int x = 0; x < W; x += 7) {
+            const int y0 = std::max(0, y - R), y1 = std::min(H - 1, y + R);
+            const int x0 = std::max(0, x - R), x1 = std::min(W - 1, x + R);
+            const int ww = x1 - x0 + 1, wh = y1 - y0 + 1;
+            std::vector<float> win;
+            for (int wy = y0; wy <= y1; wy++)
+                for (int wx = x0; wx <= x1; wx++) win.push_back(stacked[wy * W + wx]);
+            std::vector<float> dh, dv;
+            for (int ry = 0; ry < wh; ry++)
+                for (int rx = 0; rx + LAG < ww; rx++) dh.push_back(win[ry * ww + rx + LAG] - win[ry * ww + rx]);
+            for (int rx = 0; rx < ww; rx++)
+                for (int ry = 0; ry + LAG < wh; ry++) dv.push_back(win[(ry + LAG) * ww + rx] - win[ry * ww + rx]);
+            std::vector<float> dev;
+            if (!dh.empty()) { const float m = sorted_median(dh); for (float d : dh) dev.push_back(std::fabs(d - m)); }
+            if (!dv.empty()) { const float m = sorted_median(dv); for (float d : dv) dev.push_back(std::fabs(d - m)); }
+            const float expect = (dev.size() > 1) ? sorted_median(dev) * 1.4826f * 0.70710678f : 0.0f;
+            INFO("pixel " << x << "," << y);
+            REQUIRE(rms[y * W + x] == expect);      // exact, deliberately
+        }
 }
 
 TEST_CASE("CPU Fallback: local_rms reads the MARGINAL sigma of correlated noise",

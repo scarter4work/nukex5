@@ -20,6 +20,10 @@ __kernel void spatial_context(
     int width,
     int height,
     int n_channels,
+    int lum_mode,                            // 0: single plane lum_c0; 1: rec709 of c0,c1,c2
+    int lum_c0,
+    int lum_c1,
+    int lum_c2,
     __global float* gradient_mag,           // [W * H]
     __global float* local_background,       // [W * H]
     __global float* local_rms               // [W * H]
@@ -65,12 +69,12 @@ __kernel void spatial_context(
     for (int wy = y0; wy <= y1; wy++) {
         for (int wx = x0; wx <= x1; wx++) {
             float lum;
-            if (C >= 3) {
-                lum = 0.2126f * stacked_image[0 * W * H + wy * W + wx]
-                    + 0.7152f * stacked_image[1 * W * H + wy * W + wx]
-                    + 0.0722f * stacked_image[2 * W * H + wy * W + wx];
+            if (lum_mode == 1) {
+                lum = 0.2126f * stacked_image[lum_c0 * W * H + wy * W + wx]
+                    + 0.7152f * stacked_image[lum_c1 * W * H + wy * W + wx]
+                    + 0.0722f * stacked_image[lum_c2 * W * H + wy * W + wx];
             } else {
-                lum = stacked_image[wy * W + wx];
+                lum = stacked_image[lum_c0 * W * H + wy * W + wx];
             }
             window[wn++] = lum;
         }
@@ -143,27 +147,52 @@ __kernel void spatial_context(
     // Each direction is centred on its OWN median before pooling: a smooth
     // ramp gives one constant difference per direction, different between
     // directions, so pooling raw differences would read the ramp as scatter.
+    // Each direction is sorted once (for its median); its absolute deviations
+    // come out ascending by a two-pointer walk (m - s[i] leftward, s[i] - m
+    // rightward), and the pooled median is a merge: O(n) in place of the
+    // O(n^2) sort of 210 pooled deviations, bit-identically. Mirrors the CPU.
     float rms_val = 0.0f;
     if (nh + nv > 1) {
-        float abs_dev[MAX_WINDOW_SIZE];
-        int na = 0;
-        float sorted[MAX_WINDOW_SIZE];
+        float devh[MAX_WINDOW_SIZE], devv[MAX_WINDOW_SIZE];
         if (nh > 0) {
-            for (int i = 0; i < nh; i++) sorted[i] = dh[i];
-            insertion_sort_f(sorted, nh);
-            float m = sorted_median_f(sorted, nh);
-            for (int i = 0; i < nh; i++) abs_dev[na++] = fabs(dh[i] - m);
+            insertion_sort_f(dh, nh);
+            float m = sorted_median_f(dh, nh);
+            int split = 0;
+            while (split < nh && dh[split] <= m) ++split;
+            int l = split - 1, r = split, k = 0;
+            while (k < nh) {
+                float dl = (l >= 0) ? (m - dh[l]) : 3.402823466e+38f;
+                float dr = (r < nh) ? (dh[r] - m) : 3.402823466e+38f;
+                if (l >= 0 && (r >= nh || dl <= dr)) { devh[k++] = dl; --l; }
+                else                                 { devh[k++] = dr; ++r; }
+            }
         }
         if (nv > 0) {
-            for (int i = 0; i < nv; i++) sorted[i] = dv[i];
-            insertion_sort_f(sorted, nv);
-            float m = sorted_median_f(sorted, nv);
-            for (int i = 0; i < nv; i++) abs_dev[na++] = fabs(dv[i] - m);
+            insertion_sort_f(dv, nv);
+            float m = sorted_median_f(dv, nv);
+            int split = 0;
+            while (split < nv && dv[split] <= m) ++split;
+            int l = split - 1, r = split, k = 0;
+            while (k < nv) {
+                float dl = (l >= 0) ? (m - dv[l]) : 3.402823466e+38f;
+                float dr = (r < nv) ? (dv[r] - m) : 3.402823466e+38f;
+                if (l >= 0 && (r >= nv || dl <= dr)) { devv[k++] = dl; --l; }
+                else                                 { devv[k++] = dr; ++r; }
+            }
         }
-        insertion_sort_f(abs_dev, na);
+        // Median of the union of the two ascending runs, same convention as
+        // sorted_median_f (middle element, or the mean of the two middles).
+        int n = nh + nv, i = 0, j = 0;
+        float prev = 0.0f, cur = 0.0f;
+        for (int k = 0; k <= n / 2; ++k) {
+            prev = cur;
+            if (j >= nv || (i < nh && devh[i] <= devv[j])) cur = devh[i++];
+            else                                            cur = devv[j++];
+        }
+        float pooled = (n % 2 == 1) ? cur : 0.5f * (prev + cur);
         // 1.4826 converts MAD to a Gaussian sigma; 1/sqrt(2) undoes the
         // differencing of two independent samples.
-        rms_val = sorted_median_f(abs_dev, na) * 1.4826f * 0.70710678f;
+        rms_val = pooled * 1.4826f * 0.70710678f;
     }
     local_rms[gid] = rms_val;
 }

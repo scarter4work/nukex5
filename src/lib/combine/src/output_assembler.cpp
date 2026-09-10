@@ -45,9 +45,14 @@ Image OutputAssembler::assemble_measured_noise(const Cube& cube) {
 }
 
 OutputAssembler::NoiseCheck OutputAssembler::noise_check(const Image& measured,
-                                                          const Image& predicted) {
+                                                          const Image& predicted,
+                                                          LuminanceSpec luminance) {
     NoiseCheck out;
     if (measured.empty() || predicted.empty()) return out;
+    const LuminanceSpec lum = luminance.resolved(predicted.n_channels());
+    if (lum.c0 >= predicted.n_channels() ||
+        (lum.mode == LuminanceSpec::REC709 &&
+         (lum.c1 >= predicted.n_channels() || lum.c2 >= predicted.n_channels()))) return out;
 
     auto median_positive = [](std::vector<float>& v) -> double {
         if (v.empty()) return 0.0;
@@ -64,19 +69,20 @@ OutputAssembler::NoiseCheck OutputAssembler::noise_check(const Image& measured,
             if (m > 0.0f && std::isfinite(m)) mv.push_back(m);
         }
 
-    const int nc = predicted.n_channels();
     std::vector<float> pv;
     pv.reserve(static_cast<std::size_t>(predicted.width()) * predicted.height());
     for (int y = 0; y < predicted.height(); y++)
         for (int x = 0; x < predicted.width(); x++) {
             float p;
-            if (nc >= 3) {
-                const float wr = 0.2126f * predicted.at(x, y, 0);
-                const float wg = 0.7152f * predicted.at(x, y, 1);
-                const float wb = 0.0722f * predicted.at(x, y, 2);
+            if (lum.mode == LuminanceSpec::REC709) {
+                // The kernel measures on a rec709 window of these planes; the
+                // prediction combines the same planes in quadrature.
+                const float wr = 0.2126f * predicted.at(x, y, lum.c0);
+                const float wg = 0.7152f * predicted.at(x, y, lum.c1);
+                const float wb = 0.0722f * predicted.at(x, y, lum.c2);
                 p = std::sqrt(wr * wr + wg * wg + wb * wb);
             } else {
-                p = predicted.at(x, y, 0);
+                p = predicted.at(x, y, lum.c0);
             }
             if (p > 0.0f && std::isfinite(p)) pv.push_back(p);
         }

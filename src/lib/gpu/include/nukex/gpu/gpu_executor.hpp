@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nukex/gpu/gpu_config.hpp"
+#include "nukex/core/luminance_spec.hpp"
 #include "nukex/gpu/gpu_context.hpp"
 #include "nukex/gpu/gpu_kernels.hpp"
 #include "nukex/gpu/gpu_shadow_buffers.hpp"
@@ -72,7 +73,8 @@ public:
     void execute_spatial_context(
         const Image& stacked,
         Cube& cube,
-        ProgressObserver* progress = nullptr);
+        ProgressObserver* progress = nullptr,
+        LuminanceSpec luminance = LuminanceSpec{});
 
     GPUBackend active_backend() const { return context_.backend(); }
     const GPUDeviceInfo& device_info() const { return context_.device_info(); }
@@ -94,7 +96,8 @@ public:
     /// Execute kernel 4 (spatial_context) on GPU.
     void execute_spatial_gpu(const Image& stacked,
                               float* gradient_mag, float* local_background,
-                              float* local_rms);
+                              float* local_rms,
+        LuminanceSpec luminance = LuminanceSpec{});
 
 private:
     GPUContext   context_;

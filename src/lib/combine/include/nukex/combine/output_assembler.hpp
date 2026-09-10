@@ -1,5 +1,6 @@
 #pragma once
 #include "nukex/io/image.hpp"
+#include "nukex/core/luminance_spec.hpp"
 #include "nukex/core/cube.hpp"
 
 namespace nukex {
@@ -35,6 +36,7 @@ public:
         double ratio            = 0.0;
         bool   comparable       = false;   ///< false when either median is 0
     };
-    static NoiseCheck noise_check(const Image& measured, const Image& predicted);
+    static NoiseCheck noise_check(const Image& measured, const Image& predicted,
+                                  LuminanceSpec luminance = LuminanceSpec{});
 };
 } // namespace nukex

@@ -295,14 +295,51 @@ void GPUCPUFallback::select_pixels(
 // Kernel 4: spatial_context
 // ══════════════════════════════════════════════════════════════════════
 
+namespace {
+
+// Median of the absolute deviations of a SORTED array from its median m,
+// without sorting the deviations: they are two ascending runs -- m - s[i]
+// walking left from the split, s[i] - m walking right -- merged. Emits the
+// ascending deviations into `out` (n entries). Values are bit-identical to
+// fabs(s[i] - m): negation is exact in IEEE-754.
+void abs_devs_ascending(const float* s, int n, float m, float* out) {
+    int split = 0;
+    while (split < n && s[split] <= m) ++split;   // s[0..split) <= m
+    int l = split - 1, r = split, k = 0;
+    while (k < n) {
+        const float dl = (l >= 0) ? (m - s[l]) : 3.402823466e+38f;
+        const float dr = (r < n)  ? (s[r] - m) : 3.402823466e+38f;
+        if (l >= 0 && (r >= n || dl <= dr)) { out[k++] = dl; --l; }
+        else                                { out[k++] = dr; ++r; }
+    }
+}
+
+// Median of the union of two ascending arrays, by the same convention as
+// sorted_median (middle element, or the mean of the two middles).
+float median_of_two_sorted(const float* a, int na, const float* b, int nb) {
+    const int n = na + nb;
+    int i = 0, j = 0;
+    float prev = 0.0f, cur = 0.0f;
+    for (int k = 0; k <= n / 2; ++k) {
+        prev = cur;
+        if (j >= nb || (i < na && a[i] <= b[j])) cur = a[i++];
+        else                                     cur = b[j++];
+    }
+    return (n % 2 == 1) ? cur : 0.5f * (prev + cur);
+}
+
+} // namespace
+
 void GPUCPUFallback::spatial_context(
     const float* stacked_data,
     int width, int height, int n_channels,
     float* gradient_mag,
     float* local_background,
-    float* local_rms) {
+    float* local_rms,
+    LuminanceSpec luminance) {
 
     constexpr int WINDOW_RADIUS = 7;  // 15x15 window
+    const LuminanceSpec lum = luminance.resolved(n_channels);
 
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
@@ -341,15 +378,15 @@ void GPUCPUFallback::spatial_context(
 
             for (int wy = y0; wy <= y1; wy++) {
                 for (int wx = x0; wx <= x1; wx++) {
-                    float lum = 0.0f;
-                    if (n_channels >= 3) {
-                        lum = 0.2126f * stacked_data[0 * width * height + wy * width + wx]
-                            + 0.7152f * stacked_data[1 * width * height + wy * width + wx]
-                            + 0.0722f * stacked_data[2 * width * height + wy * width + wx];
+                    float lumv;
+                    if (lum.mode == LuminanceSpec::REC709) {
+                        lumv = 0.2126f * stacked_data[lum.c0 * width * height + wy * width + wx]
+                             + 0.7152f * stacked_data[lum.c1 * width * height + wy * width + wx]
+                             + 0.0722f * stacked_data[lum.c2 * width * height + wy * width + wx];
                     } else {
-                        lum = stacked_data[wy * width + wx];
+                        lumv = stacked_data[lum.c0 * width * height + wy * width + wx];
                     }
-                    window[wn++] = lum;
+                    window[wn++] = lumv;
                 }
             }
 
@@ -431,27 +468,24 @@ void GPUCPUFallback::spatial_context(
             // pooled. A smooth ramp gives every difference in a direction the
             // same value, but a different value per direction, so pooling raw
             // differences would read the ramp as scatter.
+            // Each direction is sorted once (for its median); its absolute
+            // deviations then come out ascending by a two-pointer walk, and
+            // the pooled median is a merge. That replaces the O(n^2) sort of
+            // the 210 pooled deviations with O(n), bit-identically.
             float rms_val = 0.0f;
             if (nh + nv > 1) {
-                float abs_dev[225];
-                int na = 0;
-                float sorted[225];
+                float devh[225], devv[225];
                 if (nh > 0) {
-                    for (int i = 0; i < nh; i++) sorted[i] = dh[i];
-                    insertion_sort(sorted, nh);
-                    const float m = sorted_median(sorted, nh);
-                    for (int i = 0; i < nh; i++) abs_dev[na++] = std::fabs(dh[i] - m);
+                    insertion_sort(dh, nh);
+                    abs_devs_ascending(dh, nh, sorted_median(dh, nh), devh);
                 }
                 if (nv > 0) {
-                    for (int i = 0; i < nv; i++) sorted[i] = dv[i];
-                    insertion_sort(sorted, nv);
-                    const float m = sorted_median(sorted, nv);
-                    for (int i = 0; i < nv; i++) abs_dev[na++] = std::fabs(dv[i] - m);
+                    insertion_sort(dv, nv);
+                    abs_devs_ascending(dv, nv, sorted_median(dv, nv), devv);
                 }
-                insertion_sort(abs_dev, na);
                 // 1.4826 converts MAD to a Gaussian sigma; 1/sqrt(2) undoes the
                 // differencing of two independent samples.
-                rms_val = sorted_median(abs_dev, na) * 1.4826f * 0.70710678f;
+                rms_val = median_of_two_sorted(devh, nh, devv, nv) * 1.4826f * 0.70710678f;
             }
             local_rms[pi] = rms_val;
         }
