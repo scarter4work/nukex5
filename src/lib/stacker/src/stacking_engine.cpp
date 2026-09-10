@@ -32,7 +32,6 @@
 // structured DerivedStack output; the module composes it for display.
 #include "nukex/fitting/model_selector.hpp"
 #include "nukex/fitting/robust_stats.hpp"
-#include "nukex/combine/pixel_selector.hpp"
 #include "nukex/calibration/background_gradient.hpp"
 #include "nukex/combine/spatial_context.hpp"
 #include "nukex/combine/output_assembler.hpp"
@@ -1327,7 +1326,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
 
     // ═══ PHASE B FOLLOW-UP — Q-solve derived semantic slots ═══════════
     //
-    // PixelSelector wrote the per-pixel best raw value for each cube slot
+    // Kernel 3 (pixel selection) wrote the per-pixel best raw value for each cube slot
     // into `stacked` (one image channel per slot). For dual-narrowband
     // groups (HaO3 = Ha + OIII; S2O3 = SII + OIII) we now decompose the
     // raw R/G/B columns into emission-line components via the camera-and-

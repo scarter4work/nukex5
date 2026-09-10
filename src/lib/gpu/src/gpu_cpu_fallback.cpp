@@ -1,4 +1,5 @@
 #include "nukex/gpu/gpu_cpu_fallback.hpp"
+#include "nukex/core/noise_model.hpp"
 #include <cmath>
 #include <algorithm>
 #include <vector>
@@ -229,7 +230,7 @@ void GPUCPUFallback::select_pixels(
             const int nf = buf.n_frames[ch * B + vi];
             float out_val = buf.dist_true_signal[ch * B + vi];
 
-            // Noise propagation (mirrors pixel_selector.cpp)
+            // Noise propagation
             double weight_sum = 0.0;
             double variance_sum = 0.0;
 
@@ -257,32 +258,17 @@ void GPUCPUFallback::select_pixels(
                 float w = buf.pixel_weights[ch * N * B + fi * B + vi];
                 float value = buf.pixel_values[ch * N * B + fi * B + vi];
 
-                // CCD noise model or Welford fallback
-                float sigma2;
                 const int gf = buf.global_frame_of.empty()
                              ? fi : buf.global_frame_of[ch * N + fi];
                 if (gf < 0) continue;
                 const FrameStats& fst = frame_stats[gf];
-                if (fst.has_noise_keywords) {
-                    float g = std::max(fst.gain, 1e-10f);
-                    float rn = fst.read_noise;
-                    // Undo Phase A's normalisation before the Poisson term:
-                    // shot noise belongs to the photons actually collected,
-                    // so it is evaluated on the raw value and carried back
-                    // through Var(a*x + b) = a^2 Var(x). `ch` is the cube
-                    // slot. At the identity this is bit-for-bit the old
-                    // expression. Must match select_pixels.cl exactly --
-                    // test_gpu_agreement holds the two together.
-                    float a = fst.norm_scale[ch];
-                    float b = fst.norm_offset[ch];
-                    if (!(a > 0.0f)) { a = 1.0f; b = 0.0f; }
-                    float value_adu = ((value - b) / a) * 65535.0f;
-                    float shot_var = value_adu / g;
-                    float read_var = (rn * rn) / (g * g);
-                    sigma2 = a * a * (shot_var + read_var) / (65535.0f * 65535.0f);
-                } else {
-                    sigma2 = fallback_var;
-                }
+                // CCD noise model, or the across-frame fallback when the frame
+                // has no usable keywords. `ch` is the cube slot. The model is
+                // NoiseModel::sample_variance -- the one CPU copy, and the one
+                // the unit tests cover; select_pixels.cl restates the same
+                // arithmetic for the GPU and test_gpu_agreement holds the two
+                // together.
+                const float sigma2 = NoiseModel::sample_variance(value, fst, ch, fallback_var);
 
                 weight_sum += static_cast<double>(w);
                 variance_sum += static_cast<double>(w) * static_cast<double>(w)

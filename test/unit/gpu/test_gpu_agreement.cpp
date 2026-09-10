@@ -237,11 +237,11 @@ TEST_CASE("GPU Agreement: select_pixels GPU == CPU", "[gpu][agreement]") {
 TEST_CASE("GPU Agreement: select_pixels agrees under NON-identity sky "
           "normalisation", "[gpu][agreement][normalization]") {
     // The noise model has to undo Phase A's normalisation before its Poisson
-    // term, and that correction is written out THREE times -- pixel_selector,
-    // gpu_cpu_fallback and select_pixels.cl. The case above only ever runs it
-    // at the identity, where the expression collapses and any drift between
+    // term, and that correction is written out TWICE -- NoiseModel (which the
+    // CPU fallback calls) and select_pixels.cl. The case above only ever runs
+    // it at the identity, where the expression collapses and any drift between
     // the copies is invisible. This one gives every frame a different map, so
-    // the three have to agree on the real arithmetic.
+    // the two have to agree on the real arithmetic.
     auto ctx = GPUContext::create();
     if (!ctx.is_gpu_available()) { SKIP("No GPU available"); }
 

@@ -215,6 +215,33 @@ TEST_CASE("CPU Fallback: select_pixels produces valid output", "[gpu][fallback]"
     }
 }
 
+TEST_CASE("CPU Fallback: select_pixels noise falls as 1/sqrt(N) with equal weights",
+          "[gpu][fallback]") {
+    // N identical samples under the CCD model, unit weights: the propagated
+    // noise is sigma_sample / sqrt(N). Ten frames against a hundred must
+    // therefore differ by sqrt(10). This used to be asserted on a CPU copy of
+    // kernel 3 that nothing in the product called; it is asserted here on the
+    // path that runs.
+    auto run = [](int N) {
+        const int B = 1, C = 1;
+        ShadowBuffers buf;
+        buf.allocate(B, C, N);
+        for (int fi = 0; fi < N; fi++) {
+            buf.pixel_values[fi * B] = 0.5f;
+            buf.pixel_weights[fi * B] = 1.0f;
+        }
+        buf.n_frames[0] = static_cast<uint16_t>(N);
+        buf.dist_true_signal[0] = 0.5f;
+        auto fs = make_frame_stats(N);          // gain 1.5, read noise 3, keywords present
+        GPUCPUFallback::select_pixels(buf, fs.data(), B, C, N);
+        return buf.noise_sigma[0];
+    };
+    const float n10 = run(10), n100 = run(100);
+    REQUIRE(n10 > 0.0f);
+    REQUIRE(n100 < n10);
+    REQUIRE(n10 / n100 == Catch::Approx(std::sqrt(10.0f)).epsilon(0.01));
+}
+
 TEST_CASE("CPU Fallback: predicted noise uses a robust scale, not Welford",
           "[gpu][fallback]") {
     // Without GAIN/RDNOISE keywords the noise model falls back to an
