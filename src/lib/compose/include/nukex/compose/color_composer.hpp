@@ -92,6 +92,22 @@ public:
     double gate_background() const { return gate_background_; }
     double gate_full_scale() const { return gate_full_scale_; }
 
+    /// Sky level of each emission plane, subtracted before the line weights
+    /// are formed. The derived planes carry the sky pedestal of the channels
+    /// they were solved from, and on a faint stack that pedestal dwarfs the
+    /// signal: measured on a 12-frame M16, Ha sky 0.0247 with the nebula only
+    /// +0.0010 above it, OIII 0.0229 and +0.0002. Weighted RAW, every nebula
+    /// pixel is a 53% Ha "mix" and the palette blend lands between the two
+    /// entries -- magenta with the old palette, brown with the new. Weighted
+    /// sky-subtracted, the same nebula is 87% Ha, which is what it is. Hue is
+    /// a ratio of line FLUXES, not of pedestals. Default 0: no subtraction.
+    void set_line_backgrounds(double ha_sky, double oiii_sky, double sii_sky) {
+        sky_ha_ = ha_sky; sky_oiii_ = oiii_sky; sky_sii_ = sii_sky;
+    }
+    double line_background_ha()   const { return sky_ha_; }
+    double line_background_oiii() const { return sky_oiii_; }
+    double line_background_sii()  const { return sky_sii_; }
+
     // Test seam: gamut handling is a pure function of its arguments.
     bool clip_to_gamut_for_test(double& r, double& g, double& b) {
         return clip_to_gamut(r, g, b);
@@ -117,6 +133,7 @@ private:
     double       last_emission_b_ = 0.0;
     double       gate_background_ = 0.0;
     double       gate_full_scale_ = 0.0;
+    double       sky_ha_ = 0.0, sky_oiii_ = 0.0, sky_sii_ = 0.0;
     double       last_chroma_scale_ = 0.0;
     double       last_gamut_chroma_scale_ = 1.0;
 

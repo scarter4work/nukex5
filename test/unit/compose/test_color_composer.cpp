@@ -362,3 +362,38 @@ TEST_CASE("slots_have_colour: broadband and emission slots are colour",
     REQUIRE(slots_have_colour({ {"Ha",{0.f}}, {"OIII",{0.f}} }) == true);
     REQUIRE(slots_have_colour({}) == false);
 }
+
+// ── Hue from line FLUXES, not pedestals ──────────────────────────────────
+
+TEST_CASE("ColorComposer: line sky levels come off before the ratio, so a faint "
+          "Ha nebula on a pedestal is Ha, not a 50/50 mix", "[color_composer]") {
+    // The measured M16 case: Ha sky 0.0247 with the nebula +0.0010; OIII sky
+    // 0.0229 with +0.0002. Raw, the Ha fraction is 0.527. Sky-subtracted it is
+    // 0.83, and the composed chroma must sit near the Ha entry.
+    ColorComposer c;
+    c.set_line_backgrounds(0.0247, 0.0229, 0.0);
+    DerivedSlots s;
+    s.Ha = 0.0257; s.OIII = 0.0231;
+    c.compose_pixel(s);
+    const LabColor ha = Palette::for_line(EmissionLineId::Ha);
+    const LabColor o3 = Palette::for_line(EmissionLineId::OIII);
+    const double f = 0.0010 / (0.0010 + 0.0002);
+    REQUIRE(c.last_pixel_emission_a() == Catch::Approx(f * ha.a + (1 - f) * o3.a).margin(1e-6));
+    REQUIRE(c.last_pixel_emission_b() == Catch::Approx(f * ha.b + (1 - f) * o3.b).margin(1e-6));
+
+    // Same pixel weighed raw lands halfway between the entries.
+    ColorComposer raw;
+    raw.compose_pixel(s);
+    REQUIRE(raw.last_pixel_emission_a() < 0.6 * ha.a);
+}
+
+TEST_CASE("ColorComposer: a sky pixel has no line flux and therefore no chroma",
+          "[color_composer]") {
+    ColorComposer c;
+    c.set_line_backgrounds(0.0247, 0.0229, 0.0);
+    DerivedSlots sky;
+    sky.Ha = 0.0247; sky.OIII = 0.0229;
+    c.compose_pixel(sky);
+    REQUIRE(c.last_pixel_emission_a() == Catch::Approx(0.0).margin(1e-12));
+    REQUIRE(c.last_pixel_emission_b() == Catch::Approx(0.0).margin(1e-12));
+}

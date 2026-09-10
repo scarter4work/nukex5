@@ -151,10 +151,12 @@ LabColor ColorComposer::compose_lab(const DerivedSlots& s) {
         : LabColor{ 0.0, 0.0, 0.0 };
     lab_natural.L = lab_L_from_luminance(L_broad);
 
-    // 4) Emission contribution to chrominance
-    double w_ha   = signal_weight(ha);
-    double w_oiii = signal_weight(oiii);
-    double w_sii  = signal_weight(sii);
+    // 4) Emission contribution to chrominance, from line FLUXES: each plane's
+    // sky level comes off first (see set_line_backgrounds). A pedestal is not
+    // emission, and on a faint stack it is most of the number.
+    double w_ha   = signal_weight(ha   - sky_ha_);
+    double w_oiii = signal_weight(oiii - sky_oiii_);
+    double w_sii  = signal_weight(sii  - sky_sii_);
     double total_w = w_ha + w_oiii + w_sii;
 
     LabColor pal_ha   = Palette::for_line(EmissionLineId::Ha);
