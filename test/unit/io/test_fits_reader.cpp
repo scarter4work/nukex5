@@ -84,7 +84,8 @@ namespace {
 // Minimal 4x4 float frame carrying a chosen gain-keyword combination.
 // egain/gain/rdnoise are written only when >= 0.
 std::string write_gain_fits(const std::string& name,
-                            double egain, double gain, double rdnoise) {
+                            double egain, double gain, double rdnoise,
+                            const char* instrument = nullptr) {
     const std::string path = (std::filesystem::temp_directory_path() / name).string();
     std::filesystem::remove(path);
     fitsfile* f = nullptr;
@@ -100,6 +101,7 @@ std::string write_gain_fits(const std::string& name,
     if (egain >= 0.0)   fits_update_key(f, TDOUBLE, "EGAIN",   &egain,   nullptr, &status);
     if (gain >= 0.0)    fits_update_key(f, TDOUBLE, "GAIN",    &gain,    nullptr, &status);
     if (rdnoise >= 0.0) fits_update_key(f, TDOUBLE, "RDNOISE", &rdnoise, nullptr, &status);
+    if (instrument) fits_update_key(f, TSTRING, "INSTRUME", const_cast<char*>(instrument), nullptr, &status);
     fits_close_file(f, &status);
     REQUIRE(status == 0);
     return path;
@@ -123,6 +125,25 @@ TEST_CASE("FITSReader: a GAIN menu index is not accepted as electronic gain",
     const auto p = write_gain_fits("nukex_gain_menu.fits", 0.0, 200.0, 1.9);
     auto meta = FITSReader::read_headers(p);
     REQUIRE(meta.has_noise_keywords == false);
+    std::filesystem::remove(p);
+}
+
+TEST_CASE("FITSReader: a low GAIN index on a ZWO or QHY camera is still an index, "
+          "not electronic gain", "[fits]") {
+    // GAIN=10 passes the plausibility ceiling, but on these cameras GAIN is
+    // the menu setting whatever its value; only EGAIN is electronic gain.
+    for (const char* cam : {"ZWO ASI2600MM Pro", "QHY268M", "Asi294mc Pro"}) {
+        const auto p = write_gain_fits("nukex_gain_index_low.fits", -1.0, 10.0, 1.5, cam);
+        auto meta = FITSReader::read_headers(p);
+        INFO(cam);
+        REQUIRE(meta.has_noise_keywords == false);
+        std::filesystem::remove(p);
+    }
+    // The same header from a camera whose GAIN really is e-/ADU is accepted.
+    const auto p = write_gain_fits("nukex_gain_index_ccd.fits", -1.0, 10.0, 1.5, "SBIG STL-11000M");
+    auto meta = FITSReader::read_headers(p);
+    REQUIRE(meta.has_noise_keywords == true);
+    REQUIRE(meta.gain == Catch::Approx(10.0f));
     std::filesystem::remove(p);
 }
 

@@ -1,4 +1,5 @@
 #include "nukex/io/fits_reader.hpp"
+#include <cctype>
 #include <fitsio.h>
 #include <cstring>
 #include <cmath>
@@ -68,6 +69,17 @@ FrameMetadata FITSReader::extract_metadata(void* fptr) {
     // honest answer is that the gain is unknown -- which leaves
     // has_noise_keywords false and sends Phase B to the across-frame scale.
     constexpr float MAX_PLAUSIBLE_EGAIN = 25.0f;   // e-/ADU
+    // Camera identity settles what GAIN means. ZWO (ASI) and QHY firmware
+    // write the gain MENU INDEX, and a low index (0-25) is a legitimate
+    // setting on those cameras that the plausibility ceiling alone would
+    // accept as e-/ADU -- a 10x error in the Poisson term.
+    m.instrument = read_string_key(f, "INSTRUME");
+    std::string inst_upper = m.instrument;
+    for (auto& c : inst_upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const bool gain_is_menu_index =
+        inst_upper.find("ZWO") != std::string::npos ||
+        inst_upper.find("ASI") != std::string::npos ||
+        inst_upper.find("QHY") != std::string::npos;
     bool gain_known = false;
     float egain = read_float_key(f, "EGAIN", -1.0f);
     if (egain > 0.0f) {
@@ -75,7 +87,7 @@ FrameMetadata FITSReader::extract_metadata(void* fptr) {
         gain_known = true;
     } else {
         const float g = read_float_key(f, "GAIN", -1.0f);
-        if (g > 0.0f && g <= MAX_PLAUSIBLE_EGAIN) {
+        if (!gain_is_menu_index && g > 0.0f && g <= MAX_PLAUSIBLE_EGAIN) {
             m.gain = g;
             gain_known = true;
         } else {
@@ -115,7 +127,6 @@ FrameMetadata FITSReader::extract_metadata(void* fptr) {
 
     // Strings
     m.filter        = read_string_key(f, "FILTER");
-    m.instrument    = read_string_key(f, "INSTRUME");
     m.bayer_pattern = read_string_key(f, "BAYERPAT");
     m.date_obs      = read_string_key(f, "DATE-OBS");
 

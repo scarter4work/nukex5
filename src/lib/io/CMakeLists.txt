@@ -30,6 +30,11 @@ if(NUKEX_USE_SYSTEM_CFITSIO)
     pkg_check_modules(CFITSIO REQUIRED cfitsio)
     set(_nukex_cfitsio_libs ${CFITSIO_LIBRARIES})
     set(_nukex_cfitsio_inc  ${CFITSIO_INCLUDE_DIRS})
+    # The test tree links a `cfitsio` target by name (the vendored path
+    # defines a real one); give the system path the same name.
+    add_library(cfitsio INTERFACE IMPORTED GLOBAL)
+    target_link_libraries(cfitsio INTERFACE ${CFITSIO_LIBRARIES})
+    target_include_directories(cfitsio INTERFACE ${CFITSIO_INCLUDE_DIRS})
 else()
     enable_language(C)
     include(FetchContent)
