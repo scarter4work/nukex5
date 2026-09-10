@@ -134,6 +134,29 @@ double    NXBackgroundTarget::DefaultValue() const { return 0.12; }
 double    NXBackgroundTarget::MinimumValue() const { return 0.05; }
 double    NXBackgroundTarget::MaximumValue() const { return 0.50; }
 
+// ── Estimator ────────────────────────────────────────────────────
+
+NXEstimator* TheNXEstimatorParameter = nullptr;
+
+NXEstimator::NXEstimator( MetaProcess* p ) : MetaEnumeration( p )
+{
+   TheNXEstimatorParameter = this;
+}
+
+IsoString NXEstimator::Id() const { return "estimator"; }
+size_type NXEstimator::NumberOfElements() const { return NumberOfItems; }
+IsoString NXEstimator::ElementId( size_type i ) const
+{
+   switch ( i )
+   {
+   case ModelRace: return "ModelRace";
+   case Huber:     return "Huber";
+   default:        return IsoString();
+   }
+}
+int NXEstimator::ElementValue( size_type i ) const { return int( i ); }
+size_type NXEstimator::DefaultValueIndex() const { return ModelRace; }
+
 // ── Sky gradient ─────────────────────────────────────────────────
 
 NXRemoveSkyGradient* TheNXRemoveSkyGradientParameter = nullptr;

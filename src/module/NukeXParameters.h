@@ -107,6 +107,24 @@ public:
    double    MaximumValue() const override;
 };
 
+// ── Estimator ────────────────────────────────────────────────────
+
+/// Which Phase B estimator produces each pixel: the distribution model race
+/// (NukeX's original method) or a Huber M-estimator (measured less noisy on
+/// four real corpora and far cheaper).
+class NXEstimator : public MetaEnumeration
+{
+public:
+   NXEstimator( MetaProcess* );
+   IsoString Id() const override;
+   size_type NumberOfElements() const override;
+   IsoString ElementId( size_type ) const override;
+   int ElementValue( size_type ) const override;
+   size_type DefaultValueIndex() const override;
+
+   enum { ModelRace, Huber, NumberOfItems };
+};
+
 // ── Sky gradient ─────────────────────────────────────────────────
 
 /// Remove the fixed-pattern sky TILT from the stacked output. A plane only:
@@ -210,6 +228,7 @@ extern NXPrimaryStretch*   TheNXPrimaryStretchParameter;
 extern NXFinishingStretch* TheNXFinishingStretchParameter;
 extern NXBackgroundTarget* TheNXBackgroundTargetParameter;
 extern NXRemoveSkyGradient* TheNXRemoveSkyGradientParameter;
+extern NXEstimator*        TheNXEstimatorParameter;
 extern NXEnableGPU*        TheNXEnableGPUParameter;
 extern NXCacheDirectory*   TheNXCacheDirectoryParameter;
 extern NXQEOverridePath*   TheNXQEOverridePathParameter;

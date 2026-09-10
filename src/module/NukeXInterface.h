@@ -89,6 +89,9 @@ private:
       ComboBox       FinishingStretch_ComboBox;
       NumericControl BackgroundTarget_NumericControl;
 
+      HorizontalSizer Estimator_Sizer;
+      Label          Estimator_Label;
+      ComboBox       Estimator_ComboBox;
       HorizontalSizer SkyGradient_Sizer;
       CheckBox       RemoveSkyGradient_CheckBox;
 

@@ -407,6 +407,7 @@ void NukeXInstance::Assign( const ProcessImplementation& p )
       finishingStretch = x->finishingStretch;
       backgroundTarget = x->backgroundTarget;
       removeSkyGradient = x->removeSkyGradient;
+      estimator        = x->estimator;
       enableGPU        = x->enableGPU;
       cacheDirectory   = x->cacheDirectory;
       qeOverridePath   = x->qeOverridePath;
@@ -671,6 +672,9 @@ bool NukeXInstance::ExecuteGlobal()
    config.cache_dir = cacheDirectory.ToUTF8().c_str();
    config.gpu_config.force_cpu_fallback = !enableGPU;
    config.remove_sky_gradient = removeSkyGradient;
+   config.estimator = ( estimator == NXEstimator::Huber )
+       ? nukex::StackingEngine::Config::Estimator::HUBER
+       : nukex::StackingEngine::Config::Estimator::MODEL_RACE;
    config.qe_override_path = qeOverridePath.ToUTF8().c_str();
    config.qe_database_path = ResolveQEDatabasePath();
    // Shipped QE database lives beside the module install: <base>/share/qe_database.json.
@@ -1305,6 +1309,7 @@ void* NukeXInstance::LockParameter( const MetaParameter* p, size_type tableRow )
    if ( p == TheNXFinishingStretchParameter )  return &finishingStretch;
    if ( p == TheNXBackgroundTargetParameter )  return &backgroundTarget;
    if ( p == TheNXRemoveSkyGradientParameter ) return &removeSkyGradient;
+   if ( p == TheNXEstimatorParameter )         return &estimator;
    if ( p == TheNXEnableGPUParameter )         return &enableGPU;
    if ( p == TheNXCacheDirectoryParameter )         return cacheDirectory.Begin();
    if ( p == TheNXQEOverridePathParameter )         return qeOverridePath.Begin();

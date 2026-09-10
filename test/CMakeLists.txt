@@ -70,6 +70,7 @@ nukex_add_test(test_gmm        unit/fitting/test_gmm_fitter.cpp       nukex4_fit
 nukex_add_test(test_contamination unit/fitting/test_contamination_fitter.cpp nukex4_fitting)
 nukex_add_test(test_kde          unit/fitting/test_kde_fitter.cpp         nukex4_fitting)
 nukex_add_test(test_model_selector unit/fitting/test_model_selector.cpp nukex4_fitting)
+nukex_add_test(test_huber_estimator unit/fitting/test_huber_estimator.cpp nukex4_fitting nukex4_core)
 nukex_add_test(test_weight_computer unit/classify/test_weight_computer.cpp nukex4_classify)
 nukex_add_test(test_output_assembler unit/combine/test_output_assembler.cpp nukex4_combine)
 nukex_add_test(test_palette       unit/compose/test_palette.cpp     nukex4_compose nukex4_core)

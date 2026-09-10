@@ -40,6 +40,13 @@ public:
         ModelSelector::Config fitting_config;
         std::string           cache_dir = "/tmp";
 
+        /// Which Phase B estimator produces each pixel. The model race is
+        /// NukeX's original thesis: fit Student-t, GMM, Contamination and KDE
+        /// per voxel, pick by AICc. Huber is the alternative the research
+        /// branch measured against it (see HuberEstimator).
+        enum class Estimator { MODEL_RACE, HUBER };
+        Estimator             estimator = Estimator::MODEL_RACE;
+
         /// Keep the voxel record in a mapped, unlinked file under cache_dir
         /// when it would crowd memory. At 604 B/voxel a 24 MP 4-channel
         /// stack is 14.8 GB; as heap that is what pushed a 30 GB machine to

@@ -31,6 +31,7 @@
 // ColorComposer is module-owned (Task 11 / Task 12). The engine produces
 // structured DerivedStack output; the module composes it for display.
 #include "nukex/fitting/model_selector.hpp"
+#include "nukex/fitting/huber_estimator.hpp"
 #include "nukex/fitting/robust_stats.hpp"
 #include "nukex/calibration/background_gradient.hpp"
 #include "nukex/stacker/cache_paths.hpp"
@@ -1246,6 +1247,11 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // ═══ PHASE B — Analysis (GPU-accelerated) ════════════════════════
 
     ModelSelector fitter(config_.fitting_config);
+    HuberEstimator huber;
+    const bool use_huber = (config_.estimator == Config::Estimator::HUBER);
+    obs.message(use_huber
+        ? "Estimator: Huber M-estimator (median seed, MAD scale, tuning 1.345)."
+        : "Estimator: distribution model race (Student-t / GMM / Contamination / KDE by AICc).");
 
     // Output images
     Image stacked(out_width, out_height, n_ch);
@@ -1265,7 +1271,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
 
     // Fitting callback — called per-voxel by the GPU executor after
     // kernels 1+2 complete. Runs the Ceres-based model selection cascade.
-    auto fitting_fn = [&fitter](SubcubeVoxel& voxel,
+    auto fitting_fn = [&fitter, &huber, use_huber](SubcubeVoxel& voxel,
                                  const float* values, const float* weights,
                                  int stride, int nc,
                                  const FrameStats* /*fs*/,
@@ -1277,7 +1283,10 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             // halved R.
             const int n = nf_ch ? nf_ch[ch] : stride;
             if (n <= 0) continue;
-            fitter.select(values + ch * stride, weights + ch * stride, n, voxel, ch);
+            if (use_huber)
+                huber.estimate(values + ch * stride, weights + ch * stride, n, voxel, ch);
+            else
+                fitter.select(values + ch * stride, weights + ch * stride, n, voxel, ch);
         }
     };
 

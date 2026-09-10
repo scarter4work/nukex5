@@ -284,6 +284,28 @@ NukeXInterface::GUIData::GUIData( NukeXInterface& w )
 
    Options_Sizer.Add( BackgroundTarget_NumericControl );
 
+   const char* kEstimatorTip =
+      "Which estimator produces each pixel of the stack.  Distribution race: "
+      "NukeX's original method -- fits Student-t, Gaussian-mixture, "
+      "Contamination and KDE models to every pixel's samples and picks by "
+      "AICc; also produces the per-pixel model diagnostics.  Huber "
+      "M-estimator: a robust weighted location (median seed, MAD scale, "
+      "tuning 1.345).  Measured on four real sessions the race's result is "
+      "1.05x to 1.47x noisier than Huber's at the pixel scale, and Huber "
+      "costs a small fraction of the time.";
+   Estimator_Label.SetText( "Estimator:" );
+   Estimator_Label.SetTextAlignment( TextAlign::Right | TextAlign::VertCenter );
+   Estimator_Label.SetToolTip( kEstimatorTip );
+   Estimator_ComboBox.AddItem( "Distribution race" );
+   Estimator_ComboBox.AddItem( "Huber M-estimator" );
+   Estimator_ComboBox.SetToolTip( kEstimatorTip );
+   Estimator_ComboBox.OnItemSelected( (ComboBox::item_event_handler)&NukeXInterface::e_ItemSelected, w );
+   Estimator_Sizer.SetSpacing( 4 );
+   Estimator_Sizer.Add( Estimator_Label );
+   Estimator_Sizer.Add( Estimator_ComboBox );
+   Estimator_Sizer.AddStretch();
+   Options_Sizer.Add( Estimator_Sizer );
+
    RemoveSkyGradient_CheckBox.SetText( "Remove sky gradient (tilt only)" );
    RemoveSkyGradient_CheckBox.SetToolTip(
       "Removes the fixed-pattern sky tilt from the stacked image: a flat "
@@ -424,6 +446,7 @@ void NukeXInterface::UpdateControls()
    GUI->FinishingStretch_ComboBox.SetCurrentItem( instance.finishingStretch );
    GUI->BackgroundTarget_NumericControl.SetValue( instance.backgroundTarget );
    GUI->RemoveSkyGradient_CheckBox.SetChecked( instance.removeSkyGradient );
+   GUI->Estimator_ComboBox.SetCurrentItem( instance.estimator );
    GUI->EnableGPU_CheckBox.SetChecked( instance.enableGPU );
    GUI->QEOverride_Edit.SetText( instance.qeOverridePath );
 
@@ -582,6 +605,8 @@ void NukeXInterface::e_ItemSelected( ComboBox& sender, int itemIndex )
       instance.primaryStretch = itemIndex;
    else if ( sender == GUI->FinishingStretch_ComboBox )
       instance.finishingStretch = itemIndex;
+   else if ( sender == GUI->Estimator_ComboBox )
+      instance.estimator = itemIndex;
 }
 
 void NukeXInterface::e_OptionToggled( Button& sender, bool checked )
