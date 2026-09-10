@@ -1,5 +1,4 @@
 add_library(nukex4_combine STATIC
-    src/spatial_context.cpp
     src/output_assembler.cpp
 )
 

@@ -234,6 +234,56 @@ TEST_CASE("GPU Agreement: select_pixels GPU == CPU", "[gpu][agreement]") {
     std::cout << "select_pixels: GPU == CPU ✓\n";
 }
 
+TEST_CASE("GPU Agreement: select_pixels agrees on the across-frame fallback "
+          "(no noise keywords)", "[gpu][agreement]") {
+    // None of the four E2E corpora carries RDNOISE, so this branch -- kernel
+    // 2's robust scale, Welford where that is zero -- is the one every real
+    // stack runs. The case above never reaches it.
+    auto ctx = GPUContext::create();
+    if (!ctx.is_gpu_available()) { SKIP("No GPU available"); }
+
+    int B = 100, C = 3, N = 30;
+    std::mt19937 rng(91);
+    auto fs = make_frame_stats(N);
+    for (auto& f : fs) f.has_noise_keywords = false;
+    WeightConfig wc;
+
+    ShadowBuffers cpu_buf, gpu_buf;
+    cpu_buf.allocate(B, C, N);
+    gpu_buf.allocate(B, C, N);
+    fill_synthetic(cpu_buf, B, C, N, rng);
+    rng.seed(91);
+    fill_synthetic(gpu_buf, B, C, N, rng);
+
+    GPUCPUFallback::classify_weights(cpu_buf, fs.data(), wc, B, C, N);
+    GPUCPUFallback::classify_weights(gpu_buf, fs.data(), wc, B, C, N);
+    GPUCPUFallback::robust_stats(cpu_buf, B, C, N);
+    GPUCPUFallback::robust_stats(gpu_buf, B, C, N);
+    // A few degenerate voxels, so the Welford branch is exercised too.
+    for (int vi = 0; vi < B; vi += 17)
+        for (int ch = 0; ch < C; ch++) {
+            cpu_buf.mad_out[ch * B + vi] = 0.0f;
+            gpu_buf.mad_out[ch * B + vi] = 0.0f;
+        }
+    for (int ch = 0; ch < C; ch++)
+        for (int vi = 0; vi < B; vi++) {
+            float sig = cpu_buf.welford_mean[ch * B + vi];
+            cpu_buf.dist_true_signal[ch * B + vi] = sig;
+            gpu_buf.dist_true_signal[ch * B + vi] = sig;
+        }
+
+    GPUCPUFallback::select_pixels(cpu_buf, fs.data(), B, C, N);
+    GPUExecutor gpu_exec;
+    gpu_exec.execute_select_gpu(gpu_buf, fs.data(), B, C, N);
+
+    float max_noise_diff = 0.0f;
+    for (int i = 0; i < C * B; i++)
+        max_noise_diff = std::max(max_noise_diff,
+            std::fabs(cpu_buf.noise_sigma[i] - gpu_buf.noise_sigma[i]));
+    std::cout << "select_pixels (fallback scale): max_noise_diff=" << max_noise_diff << "\n";
+    REQUIRE(max_noise_diff < GPU_TOL);
+}
+
 TEST_CASE("GPU Agreement: select_pixels agrees under NON-identity sky "
           "normalisation", "[gpu][agreement][normalization]") {
     // The noise model has to undo Phase A's normalisation before its Poisson

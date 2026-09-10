@@ -122,31 +122,48 @@ __kernel void spatial_context(
     // ── Local RMS from neighbour differences (mirrors the CPU fallback) ──
     //
     // MAD about the local median reports smooth STRUCTURE as noise: on a
-    // noiseless ramp of slope s it returns 5.93*s. Differencing horizontally
-    // adjacent pixels cancels anything smooth. The window is gathered
-    // row-major, so row boundaries are skipped.
+    // noiseless ramp of slope s it returns 5.93*s. Differencing pixels a
+    // fixed lag apart cancels anything smooth. The window is gathered
+    // row-major.
+    // Lag 8, both directions: adjacent pixels are correlated by debayering
+    // and resampling (measured rho 0.34 mono, 0.6-0.7 OSC), and the
+    // difference-based sigma flattens near lag 8. Mirrors the CPU fallback.
+    const int LAG = 8;
     int win_w = x1 - x0 + 1;
     int win_h = y1 - y0 + 1;
-    float diffs[MAX_WINDOW_SIZE];
-    int dn = 0;
+    float dh[MAX_WINDOW_SIZE], dv[MAX_WINDOW_SIZE];
+    int nh = 0, nv = 0;
     for (int ry = 0; ry < win_h; ry++)
-        for (int rx = 0; rx + 1 < win_w; rx++)
-            diffs[dn++] = window[ry * win_w + rx + 1] - window[ry * win_w + rx];
+        for (int rx = 0; rx + LAG < win_w; rx++)
+            dh[nh++] = window[ry * win_w + rx + LAG] - window[ry * win_w + rx];
+    for (int rx = 0; rx < win_w; rx++)
+        for (int ry = 0; ry + LAG < win_h; ry++)
+            dv[nv++] = window[(ry + LAG) * win_w + rx] - window[ry * win_w + rx];
 
+    // Each direction is centred on its OWN median before pooling: a smooth
+    // ramp gives one constant difference per direction, different between
+    // directions, so pooling raw differences would read the ramp as scatter.
     float rms_val = 0.0f;
-    if (dn > 1) {
-        float sorted_d[MAX_WINDOW_SIZE];
-        for (int i = 0; i < dn; i++) sorted_d[i] = diffs[i];
-        insertion_sort_f(sorted_d, dn);
-        float med_d = sorted_median_f(sorted_d, dn);
-
-        float abs_dev_d[MAX_WINDOW_SIZE];
-        for (int i = 0; i < dn; i++) abs_dev_d[i] = fabs(diffs[i] - med_d);
-        insertion_sort_f(abs_dev_d, dn);
-
+    if (nh + nv > 1) {
+        float abs_dev[MAX_WINDOW_SIZE];
+        int na = 0;
+        float sorted[MAX_WINDOW_SIZE];
+        if (nh > 0) {
+            for (int i = 0; i < nh; i++) sorted[i] = dh[i];
+            insertion_sort_f(sorted, nh);
+            float m = sorted_median_f(sorted, nh);
+            for (int i = 0; i < nh; i++) abs_dev[na++] = fabs(dh[i] - m);
+        }
+        if (nv > 0) {
+            for (int i = 0; i < nv; i++) sorted[i] = dv[i];
+            insertion_sort_f(sorted, nv);
+            float m = sorted_median_f(sorted, nv);
+            for (int i = 0; i < nv; i++) abs_dev[na++] = fabs(dv[i] - m);
+        }
+        insertion_sort_f(abs_dev, na);
         // 1.4826 converts MAD to a Gaussian sigma; 1/sqrt(2) undoes the
         // differencing of two independent samples.
-        rms_val = sorted_median_f(abs_dev_d, dn) * 1.4826f * 0.70710678f;
+        rms_val = sorted_median_f(abs_dev, na) * 1.4826f * 0.70710678f;
     }
     local_rms[gid] = rms_val;
 }

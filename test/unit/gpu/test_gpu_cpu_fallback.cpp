@@ -382,6 +382,38 @@ TEST_CASE("CPU Fallback: local_rms recovers a known noise sigma", "[gpu][fallbac
     REQUIRE(mean_rms == Catch::Approx(sigma).epsilon(0.15));
 }
 
+TEST_CASE("CPU Fallback: local_rms reads the MARGINAL sigma of correlated noise",
+          "[gpu][fallback]") {
+    // A real stack's pixels are correlated: debayering and resampling both
+    // average neighbours. Here white noise of sigma s is box-averaged 3x3, so
+    // every pixel's marginal sigma is s/3 while adjacent pixels share 6 of 9
+    // source samples (rho = 2/3). A lag-1 difference estimator reads
+    // s/3 * sqrt(1 - rho) = 0.58 * s/3 -- 42% low. The predicted noise map is
+    // a marginal sigma, so the measured one must be too.
+    const int W = 96, H = 96, C = 1;
+    const float s = 0.03f;
+    std::mt19937 rng(2024);
+    std::normal_distribution<float> gauss(0.0f, s);
+    std::vector<float> white((W + 2) * (H + 2));
+    for (auto& v : white) v = gauss(rng);
+    std::vector<float> stacked(W * H);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            float acc = 0.0f;
+            for (int dy = 0; dy < 3; dy++)
+                for (int dx = 0; dx < 3; dx++) acc += white[(y + dy) * (W + 2) + (x + dx)];
+            stacked[y * W + x] = 0.5f + acc / 9.0f;
+        }
+    std::vector<float> grad(W * H), bg(W * H), rms(W * H);
+    GPUCPUFallback::spatial_context(stacked.data(), W, H, C,
+                                     grad.data(), bg.data(), rms.data());
+    double sum = 0.0; int n = 0;
+    for (int y = 12; y < H - 12; y++)
+        for (int x = 12; x < W - 12; x++) { sum += rms[y * W + x]; n++; }
+    const double mean_rms = sum / n;
+    REQUIRE(mean_rms == Catch::Approx(s / 3.0).epsilon(0.15));
+}
+
 TEST_CASE("CPU Fallback: local_rms is not inflated by a gradient under the noise",
           "[gpu][fallback]") {
     // The case that matters on real data: faint noise riding a sky gradient.

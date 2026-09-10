@@ -44,73 +44,48 @@ Image OutputAssembler::assemble_measured_noise(const Cube& cube) {
     return measured;
 }
 
-double OutputAssembler::measured_vs_predicted_ratio(const Image& measured,
-                                                    const Image& predicted) {
-    if (measured.empty() || predicted.empty()) return 0.0;
-    if (measured.width() != predicted.width() ||
-        measured.height() != predicted.height()) return 0.0;
+OutputAssembler::NoiseCheck OutputAssembler::noise_check(const Image& measured,
+                                                          const Image& predicted) {
+    NoiseCheck out;
+    if (measured.empty() || predicted.empty()) return out;
 
-    // The spatial kernel measures noise on a LUMINANCE window, so a colour
-    // prediction has to be combined the same way before the two are
-    // comparable. Channels are treated as independent, which is what the
-    // per-channel fits assume.
-    const int nc = predicted.n_channels();
-    std::vector<double> ratios;
-    ratios.reserve(static_cast<std::size_t>(measured.width()) * measured.height());
+    auto median_positive = [](std::vector<float>& v) -> double {
+        if (v.empty()) return 0.0;
+        const std::size_t mid = v.size() / 2;
+        std::nth_element(v.begin(), v.begin() + mid, v.end());
+        return v[mid];
+    };
 
-    for (int y = 0; y < measured.height(); y++) {
+    std::vector<float> mv;
+    mv.reserve(static_cast<std::size_t>(measured.width()) * measured.height());
+    for (int y = 0; y < measured.height(); y++)
         for (int x = 0; x < measured.width(); x++) {
             const float m = measured.at(x, y, 0);
-            if (!(m > 0.0f) || !std::isfinite(m)) continue;
-
-            double p;
-            if (nc >= 3) {
-                const double wr = 0.2126 * predicted.at(x, y, 0);
-                const double wg = 0.7152 * predicted.at(x, y, 1);
-                const double wb = 0.0722 * predicted.at(x, y, 2);
-                p = std::sqrt(wr * wr + wg * wg + wb * wb);
-            } else {
-                p = predicted.at(x, y, 0);
-            }
-            if (!(p > 0.0) || !std::isfinite(p)) continue;
-            ratios.push_back(static_cast<double>(m) / p);
+            if (m > 0.0f && std::isfinite(m)) mv.push_back(m);
         }
-    }
-    if (ratios.empty()) return 0.0;
 
-    const std::size_t mid = ratios.size() / 2;
-    std::nth_element(ratios.begin(), ratios.begin() + mid, ratios.end());
-    double med = ratios[mid];
-    if (ratios.size() % 2 == 0) {
-        double lo = *std::max_element(ratios.begin(), ratios.begin() + mid);
-        med = 0.5 * (lo + med);
-    }
-    return med;
-}
-
-double OutputAssembler::predicted_luminance_median(const Image& predicted) {
-    if (predicted.empty()) return 0.0;
     const int nc = predicted.n_channels();
-    std::vector<double> vals;
-    vals.reserve(static_cast<std::size_t>(predicted.width()) * predicted.height());
-    for (int y = 0; y < predicted.height(); y++) {
+    std::vector<float> pv;
+    pv.reserve(static_cast<std::size_t>(predicted.width()) * predicted.height());
+    for (int y = 0; y < predicted.height(); y++)
         for (int x = 0; x < predicted.width(); x++) {
-            double p;
+            float p;
             if (nc >= 3) {
-                const double wr = 0.2126 * predicted.at(x, y, 0);
-                const double wg = 0.7152 * predicted.at(x, y, 1);
-                const double wb = 0.0722 * predicted.at(x, y, 2);
+                const float wr = 0.2126f * predicted.at(x, y, 0);
+                const float wg = 0.7152f * predicted.at(x, y, 1);
+                const float wb = 0.0722f * predicted.at(x, y, 2);
                 p = std::sqrt(wr * wr + wg * wg + wb * wb);
             } else {
                 p = predicted.at(x, y, 0);
             }
-            if (p > 0.0 && std::isfinite(p)) vals.push_back(p);
+            if (p > 0.0f && std::isfinite(p)) pv.push_back(p);
         }
-    }
-    if (vals.empty()) return 0.0;
-    const std::size_t mid = vals.size() / 2;
-    std::nth_element(vals.begin(), vals.begin() + mid, vals.end());
-    return vals[mid];
+
+    out.measured_median  = median_positive(mv);
+    out.predicted_median = median_positive(pv);
+    out.comparable = out.measured_median > 0.0 && out.predicted_median > 0.0;
+    out.ratio = out.comparable ? out.measured_median / out.predicted_median : 0.0;
+    return out;
 }
 
 } // namespace nukex

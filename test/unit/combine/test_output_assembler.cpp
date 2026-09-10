@@ -76,27 +76,27 @@ TEST_CASE("OutputAssembler: measured noise map carries local_rms", "[assembler]"
     REQUIRE(measured.at(4, 3, 0) == Catch::Approx(1.0f));
 }
 
-TEST_CASE("OutputAssembler: measured/predicted ratio is 1 when they agree (mono)",
+TEST_CASE("OutputAssembler: noise check is 1 when measured and predicted agree (mono)",
           "[assembler]") {
     Image measured(8, 8, 1);
     Image predicted(8, 8, 1);
     measured.fill(0.02f);
     predicted.fill(0.02f);
-    REQUIRE(OutputAssembler::measured_vs_predicted_ratio(measured, predicted)
-            == Catch::Approx(1.0).epsilon(1e-4));
+    const auto nc = OutputAssembler::noise_check(measured, predicted);
+    REQUIRE(nc.comparable);
+    REQUIRE(nc.ratio == Catch::Approx(1.0).epsilon(1e-4));
 }
 
-TEST_CASE("OutputAssembler: measured/predicted ratio reports an inflated measurement",
-          "[assembler]") {
+TEST_CASE("OutputAssembler: noise check reports an inflated measurement", "[assembler]") {
     Image measured(8, 8, 1);
     Image predicted(8, 8, 1);
     measured.fill(0.03f);
     predicted.fill(0.02f);
-    REQUIRE(OutputAssembler::measured_vs_predicted_ratio(measured, predicted)
-            == Catch::Approx(1.5).epsilon(1e-4));
+    const auto nc = OutputAssembler::noise_check(measured, predicted);
+    REQUIRE(nc.ratio == Catch::Approx(1.5).epsilon(1e-4));
 }
 
-TEST_CASE("OutputAssembler: ratio combines colour channels in quadrature",
+TEST_CASE("OutputAssembler: noise check combines colour channels in quadrature",
           "[assembler]") {
     // Measured noise is a LUMINANCE quantity (the spatial kernel builds a
     // luminance window), so a 3-channel predicted map must be combined the
@@ -108,43 +108,34 @@ TEST_CASE("OutputAssembler: ratio combines colour channels in quadrature",
     predicted.fill(1.0f);
     Image measured(4, 4, 1);
     measured.fill(0.74961f);
-    REQUIRE(OutputAssembler::measured_vs_predicted_ratio(measured, predicted)
-            == Catch::Approx(1.0).epsilon(1e-3));
+    const auto nc = OutputAssembler::noise_check(measured, predicted);
+    REQUIRE(nc.predicted_median == Catch::Approx(0.74961).epsilon(1e-3));
+    REQUIRE(nc.ratio == Catch::Approx(1.0).epsilon(1e-3));
 }
 
-// The console prints measured, predicted and their ratio. Those three numbers
-// have to reconcile, or the instrument teaches the reader to distrust it. The
-// ratio combines colour channels in quadrature to a luminance equivalent, so
-// the printed "predicted" must be computed the same way -- printing channel
-// 0's median instead makes a 1.05x read as 1.28x on a colour stack.
-
-TEST_CASE("OutputAssembler: predicted luminance median matches the ratio's basis",
+TEST_CASE("OutputAssembler: the three printed numbers reconcile on a real-shaped map",
           "[assembler]") {
-    Image predicted(8, 8, 3);
-    predicted.fill(1.0f);
-    // sqrt((0.2126)^2 + (0.7152)^2 + (0.0722)^2) = 0.74961
-    REQUIRE(OutputAssembler::predicted_luminance_median(predicted)
-            == Catch::Approx(0.74961).epsilon(1e-3));
+    // Not a constant image: per-pixel measured/predicted varies, so a median
+    // of ratios would NOT equal the ratio of medians. The console prints the
+    // two medians and the ratio; dividing the first two must give the third.
+    Image predicted(16, 16, 3);
+    Image measured(16, 16, 1);
+    for (int y = 0; y < 16; y++)
+        for (int x = 0; x < 16; x++) {
+            for (int c = 0; c < 3; c++) predicted.at(x, y, c) = 0.01f + 0.001f * ((x * 3 + y * 5 + c) % 11);
+            measured.at(x, y, 0) = 0.012f + 0.002f * ((x * 7 + y) % 13);
+        }
+    const auto nc = OutputAssembler::noise_check(measured, predicted);
+    REQUIRE(nc.comparable);
+    REQUIRE(nc.ratio == Catch::Approx(nc.measured_median / nc.predicted_median).epsilon(1e-9));
 }
 
-TEST_CASE("OutputAssembler: predicted luminance median is the plain median on mono",
+TEST_CASE("OutputAssembler: noise check is not comparable when a map is empty or zero",
           "[assembler]") {
-    Image predicted(8, 8, 1);
-    predicted.fill(0.02f);
-    REQUIRE(OutputAssembler::predicted_luminance_median(predicted)
-            == Catch::Approx(0.02).epsilon(1e-4));
-}
-
-TEST_CASE("OutputAssembler: printed predicted and ratio agree on a colour stack",
-          "[assembler]") {
-    // The regression this exists to catch: measured / printed-predicted must
-    // equal the reported ratio on a 3-channel image.
-    Image predicted(8, 8, 3);
-    predicted.fill(1.0f);
     Image measured(8, 8, 1);
-    measured.fill(1.5f * 0.74961f);
-    const double ratio = OutputAssembler::measured_vs_predicted_ratio(measured, predicted);
-    const double printed_p = OutputAssembler::predicted_luminance_median(predicted);
-    REQUIRE(ratio == Catch::Approx(1.5).epsilon(1e-3));
-    REQUIRE(1.5f * 0.74961f / printed_p == Catch::Approx(ratio).epsilon(1e-3));
+    Image predicted(8, 8, 1);
+    measured.fill(0.02f);
+    predicted.fill(0.0f);
+    REQUIRE_FALSE(OutputAssembler::noise_check(measured, predicted).comparable);
+    REQUIRE_FALSE(OutputAssembler::noise_check(Image{}, predicted).comparable);
 }
