@@ -34,6 +34,7 @@ NukeXProcess::NukeXProcess()
 
    // GPU
    new NXBackgroundTarget( this );
+   new NXRemoveSkyGradient( this );
    new NXEnableGPU( this );
 
    // Cache

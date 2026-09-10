@@ -62,6 +62,9 @@ public:
    // black stays at 0.0000% and white unmoved, because the shadow point is
    // bounded independently.
    float       backgroundTarget = 0.12f;
+   // Remove the fixed-pattern sky tilt from the stack (plane only; the sky
+   // level is untouched). See StackingEngine::Config::remove_sky_gradient.
+   pcl_bool    removeSkyGradient = true;
    pcl_bool    enableGPU       = true;
    String      cacheDirectory  = "/tmp";
    String      qeOverridePath;  // optional path to qe_overrides.json; empty = none

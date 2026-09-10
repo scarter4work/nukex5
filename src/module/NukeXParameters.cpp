@@ -133,6 +133,18 @@ double    NXBackgroundTarget::DefaultValue() const { return 0.12; }
 double    NXBackgroundTarget::MinimumValue() const { return 0.05; }
 double    NXBackgroundTarget::MaximumValue() const { return 0.50; }
 
+// ── Sky gradient ─────────────────────────────────────────────────
+
+NXRemoveSkyGradient* TheNXRemoveSkyGradientParameter = nullptr;
+
+NXRemoveSkyGradient::NXRemoveSkyGradient( MetaProcess* p ) : MetaBoolean( p )
+{
+   TheNXRemoveSkyGradientParameter = this;
+}
+
+IsoString NXRemoveSkyGradient::Id() const { return "removeSkyGradient"; }
+bool NXRemoveSkyGradient::DefaultValue() const { return true; }
+
 NXEnableGPU::NXEnableGPU( MetaProcess* p ) : MetaBoolean( p )
 {
    TheNXEnableGPUParameter = this;

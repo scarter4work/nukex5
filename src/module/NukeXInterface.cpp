@@ -284,6 +284,23 @@ NukeXInterface::GUIData::GUIData( NukeXInterface& w )
 
    Options_Sizer.Add( BackgroundTarget_NumericControl );
 
+   RemoveSkyGradient_CheckBox.SetText( "Remove sky gradient (tilt only)" );
+   RemoveSkyGradient_CheckBox.SetToolTip(
+      "Removes the fixed-pattern sky tilt from the stacked image: a flat "
+      "plane fitted to the background, with anything brighter than the sky "
+      "ignored so stars and nebulosity do not pull it.  Only the tilt comes "
+      "off -- the sky level is left where it was, and a curved gradient "
+      "(vignetting, a dome) is deliberately not touched, because a curved "
+      "fit can follow the faint outskirts of a large object and subtract "
+      "them.  Turn off to keep the stack exactly as accumulated, e.g. to "
+      "remove gradients yourself in PixInsight.  Default: on." );
+   RemoveSkyGradient_CheckBox.OnClick( (Button::click_event_handler)&NukeXInterface::e_OptionToggled, w );
+
+   SkyGradient_Sizer.SetSpacing( 16 );
+   SkyGradient_Sizer.Add( RemoveSkyGradient_CheckBox );
+   SkyGradient_Sizer.AddStretch();
+   Options_Sizer.Add( SkyGradient_Sizer );
+
    GPU_Sizer.SetSpacing( 16 );
    GPU_Sizer.Add( EnableGPU_CheckBox );
    GPU_Sizer.AddStretch();
@@ -406,6 +423,7 @@ void NukeXInterface::UpdateControls()
    GUI->PrimaryStretch_ComboBox.SetCurrentItem( instance.primaryStretch );
    GUI->FinishingStretch_ComboBox.SetCurrentItem( instance.finishingStretch );
    GUI->BackgroundTarget_NumericControl.SetValue( instance.backgroundTarget );
+   GUI->RemoveSkyGradient_CheckBox.SetChecked( instance.removeSkyGradient );
    GUI->EnableGPU_CheckBox.SetChecked( instance.enableGPU );
    GUI->QEOverride_Edit.SetText( instance.qeOverridePath );
 
@@ -570,6 +588,8 @@ void NukeXInterface::e_OptionToggled( Button& sender, bool checked )
 {
    if ( sender == GUI->EnableGPU_CheckBox )
       instance.enableGPU = checked;
+   else if ( sender == GUI->RemoveSkyGradient_CheckBox )
+      instance.removeSkyGradient = checked;
 }
 
 void NukeXInterface::e_ValueUpdated( NumericEdit& sender, double value )

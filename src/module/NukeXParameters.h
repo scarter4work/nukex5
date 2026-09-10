@@ -107,6 +107,22 @@ public:
    double    MaximumValue() const override;
 };
 
+// ── Sky gradient ─────────────────────────────────────────────────
+
+/// Remove the fixed-pattern sky TILT from the stacked output. A plane only:
+/// the sky level stays where it was, and a curved surface is never fitted
+/// because it can follow a large object's outskirts and subtract them. Off
+/// leaves the stack exactly as accumulated, for users who remove gradients
+/// themselves in PixInsight. The engine default has been ON since v5.0.5.0;
+/// this parameter is what the 5.0.5.0 release notes promised and did not ship.
+class NXRemoveSkyGradient : public MetaBoolean
+{
+public:
+   NXRemoveSkyGradient( MetaProcess* );
+   IsoString Id() const override;
+   bool DefaultValue() const override;
+};
+
 // ── GPU Configuration ────────────────────────────────────────────
 
 class NXEnableGPU : public MetaBoolean
@@ -193,6 +209,7 @@ extern NXFlatFrameEnabled* TheNXFlatFrameEnabledParameter;
 extern NXPrimaryStretch*   TheNXPrimaryStretchParameter;
 extern NXFinishingStretch* TheNXFinishingStretchParameter;
 extern NXBackgroundTarget* TheNXBackgroundTargetParameter;
+extern NXRemoveSkyGradient* TheNXRemoveSkyGradientParameter;
 extern NXEnableGPU*        TheNXEnableGPUParameter;
 extern NXCacheDirectory*   TheNXCacheDirectoryParameter;
 extern NXQEOverridePath*   TheNXQEOverridePathParameter;

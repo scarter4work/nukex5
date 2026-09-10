@@ -89,6 +89,9 @@ private:
       ComboBox       FinishingStretch_ComboBox;
       NumericControl BackgroundTarget_NumericControl;
 
+      HorizontalSizer SkyGradient_Sizer;
+      CheckBox       RemoveSkyGradient_CheckBox;
+
       HorizontalSizer GPU_Sizer;
       CheckBox       EnableGPU_CheckBox;
 
