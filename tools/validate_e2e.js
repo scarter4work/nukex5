@@ -263,6 +263,23 @@ function closeAllNukexWindows() {
    }
 }
 
+// Optional per-case process-parameter overrides, e.g.
+//    "instance_overrides": { "removeSkyGradient": false }
+// Applied verbatim to the NukeX instance after the harness's own settings,
+// so a case (or a one-off manifest) can pin any parameter the module exposes.
+// Exists so an attribution run -- "does the old golden come back with this
+// feature off?" -- is a manifest edit, not a code edit.
+function applyInstanceOverrides(P, tc) {
+   if (!tc.instance_overrides) return;
+   for (var k in tc.instance_overrides) {
+      if (!tc.instance_overrides.hasOwnProperty(k)) continue;
+      if (typeof P[k] === "undefined")
+         throw new Error("instance_overrides: NukeX has no parameter '" + k + "'");
+      P[k] = tc.instance_overrides[k];
+      Console.writeln("[" + tc.name + "] override " + k + " = " + tc.instance_overrides[k]);
+   }
+}
+
 function runPrimary(tc, out_dir, manifest) {
    var lights = collectLights(tc.light_dir, tc.light_glob, tc.max_frames);
    if (lights.length === 0)
@@ -278,6 +295,7 @@ function runPrimary(tc, out_dir, manifest) {
    P.finishingStretch = tc.finishing_stretch;
    P.enableGPU = true;
    P.cacheDirectory = cacheDir(manifest);
+   applyInstanceOverrides(P, tc);
 
    closeAllNukexWindows();
 
@@ -391,6 +409,7 @@ function runSweepVariant(tc, variant, out_dir, manifest) {
    P.finishingStretch = tc.finishing_stretch;
    P.enableGPU = true;
    P.cacheDirectory = cacheDir(manifest);
+   applyInstanceOverrides(P, tc);
 
    closeAllNukexWindows();
 
