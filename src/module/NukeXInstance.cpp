@@ -883,14 +883,38 @@ bool NukeXInstance::ExecuteGlobal()
       if ( Ha_p || OIII_p || SII_p )
       {
          const int stride = std::max( 1, N / 200000 );
+
+         // Each line's sky level first: hue is a ratio of line FLUXES, and
+         // the derived planes carry the sky pedestal of the channels they
+         // were solved from. On a faint stack the pedestal is most of the
+         // number (M16, 12 frames: Ha 0.0247 sky, nebula +0.0010), so a raw
+         // ratio makes every pixel a 50/50 mix. The composer subtracts these
+         // before it weighs the lines.
+         auto plane_median = [&]( const float* plane ) -> double {
+            if ( !plane ) return 0.0;
+            std::vector<double> v;
+            v.reserve( static_cast<std::size_t>( N / stride ) + 1 );
+            for ( int p = 0; p < N; p += stride ) v.push_back( plane[p] );
+            const std::size_t mid = v.size() / 2;
+            std::nth_element( v.begin(), v.begin() + mid, v.end() );
+            return v[mid];
+         };
+         const double sky_ha = plane_median( Ha_p ), sky_oiii = plane_median( OIII_p ), sky_sii = plane_median( SII_p );
+         composer.set_line_backgrounds( sky_ha, sky_oiii, sky_sii );
+         Console().WriteLn( String().Format(
+            "Line sky levels subtracted before the ratio: Ha %.6f, OIII %.6f, SII %.6f.",
+            sky_ha, sky_oiii, sky_sii ) );
+
+         // The gate is then on the sky-SUBTRACTED total, the same quantity
+         // the composer weighs.
          std::vector<double> samples;
          samples.reserve( static_cast<std::size_t>( N / stride ) + 1 );
          for ( int p = 0; p < N; p += stride )
          {
             double tw = 0.0;
-            if ( Ha_p   ) tw += std::max( 0.0, static_cast<double>( Ha_p[p]   ) );
-            if ( OIII_p ) tw += std::max( 0.0, static_cast<double>( OIII_p[p] ) );
-            if ( SII_p  ) tw += std::max( 0.0, static_cast<double>( SII_p[p]  ) );
+            if ( Ha_p   ) tw += std::max( 0.0, static_cast<double>( Ha_p[p]   ) - sky_ha );
+            if ( OIII_p ) tw += std::max( 0.0, static_cast<double>( OIII_p[p] ) - sky_oiii );
+            if ( SII_p  ) tw += std::max( 0.0, static_cast<double>( SII_p[p]  ) - sky_sii );
             samples.push_back( tw );
          }
          if ( !samples.empty() )
@@ -1195,6 +1219,40 @@ bool NukeXInstance::ExecuteGlobal()
          if ( res.saved )
             SaveRatingFromLastRun( res );
       }
+   }
+
+   // Emission-line planes as their own windows.
+   //
+   // A narrowband imager processes Ha and OIII separately as a matter of
+   // course, and until now NukeX composed them and threw the planes away.
+   // These are the Q-solve's output in the stack's own linear units, before
+   // any palette: the line ratio the colour is built from, as data.
+   for ( const char* line : { "Ha", "OIII", "SII" } )
+   {
+      auto it = result.derived.slots.find( line );
+      if ( it == result.derived.slots.end() )
+         continue;
+      const int lw_w = result.derived.width, lw_h = result.derived.height;
+      if ( lw_w <= 0 || lw_h <= 0 ||
+           it->second.size() < static_cast<size_t>( lw_w ) * static_cast<size_t>( lw_h ) )
+         continue;
+      ImageWindow lw( lw_w, lw_h, 1, 32, true, false, true, IsoString( "NukeX_" ) + line );
+      View lv = lw.MainView();
+      ImageVariant lvi = lv.Image();
+      if ( lvi.IsFloatSample() && lvi.BitsPerSample() == 32 )
+      {
+         pcl::Image& li = static_cast<pcl::Image&>( *lvi );
+         ::memcpy( li.PixelData( 0 ), it->second.data(),
+                   static_cast<size_t>( lw_w ) * lw_h * sizeof( float ) );
+      }
+      const std::string kind = std::string( "line_" ) + line;
+      pcl::FITSKeywordArray lka = base_output_keywords(
+          NUKEX_VERSION_STRING, kind.c_str(),
+          result.n_frames_processed, result.n_frames_failed_alignment );
+      append_calibration_keywords( lka, result );
+      lw.SetKeywords( lka );
+      lw.Show();
+      progress.message( ( std::string( line ) + " line plane opened." ).c_str() );
    }
 
    // Create noise map window

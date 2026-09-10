@@ -322,7 +322,10 @@ function runPrimary(tc, out_dir, manifest) {
    ensureDir(out_dir);
    var saved = {};
    var hashes = {};
-   var tags = ["stacked", "noise", "stretched", "composed"];
+   // The emission-line planes (NukeX_Ha, NukeX_OIII, NukeX_SII) open only on
+   // narrowband stacks; absent windows are simply not recorded, and a golden
+   // that predates them is not failed by their presence.
+   var tags = ["stacked", "noise", "stretched", "composed", "Ha", "OIII", "SII"];
    for (var t = 0; t < tags.length; t++) {
       var w = findWindow("NukeX_" + tags[t]);
       if (w) {
