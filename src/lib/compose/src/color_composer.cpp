@@ -97,8 +97,8 @@ bool ColorComposer::clip_to_gamut(double& r, double& g, double& b) {
     return clipped;
 }
 
-sRGBPixel ColorComposer::compose_pixel(const DerivedSlots& s) {
-    // 1) Luminance: native L, else rec709 from RGB, else the emission total.
+double ColorComposer::luminance_of(const DerivedSlots& s) {
+    // Native L, else rec709 from RGB, else the emission total.
     //
     // The third case is not a fallback, it is the narrowband case. A dual-NB
     // frame has no broadband slots at all -- Phase B fills Ha and OIII, and L,
@@ -115,9 +115,22 @@ sRGBPixel ColorComposer::compose_pixel(const DerivedSlots& s) {
                                 + std::max(0.0, s.OIII)
                                 + std::max(0.0, s.SII);
     const double rec709 = 0.299 * s.R + 0.587 * s.G + 0.114 * s.B;
-    double L_broad = (s.L > 0.0)   ? s.L
-                   : (rec709 > 0.0) ? rec709
-                                    : std::min(1.0, emission_total);
+    return (s.L > 0.0)   ? s.L
+         : (rec709 > 0.0) ? rec709
+                          : std::min(1.0, emission_total);
+}
+
+double ColorComposer::lab_L_from_luminance(double v) {
+    // srgb_to_linear(v) -> Y -> L* via f_lab matches the natural L* of an
+    // equal-RGB sRGB triplet exactly, which is what makes the grey axis an
+    // identity through compose_pixel.
+    const double linear_y = srgb_to_linear(v);
+    return 116.0 * f_lab(linear_y) - 16.0;
+}
+
+LabColor ColorComposer::compose_lab(const DerivedSlots& s) {
+    // 1) Luminance.
+    const double L_broad = luminance_of(s);
 
     // 2) Continuum subtract (opt-in)
     double ha = s.Ha, oiii = s.OIII, sii = s.SII;
@@ -131,16 +144,12 @@ sRGBPixel ColorComposer::compose_pixel(const DerivedSlots& s) {
     // override luminance with L_broad converted to CIE L* via the sRGB
     // transfer function. This preserves LRGBSHO design intent (dedicated
     // L drives luminance, RGB drives chrominance) AND yields identity
-    // roundtrip on the gray axis, because srgb_to_linear(L) → Y → L* via
-    // f_lab matches the natural L* of equal-RGB sRGB exactly.
+    // roundtrip on the gray axis.
     bool have_broadband = (s.R + s.G + s.B) > 0.0;
     LabColor lab_natural = have_broadband
         ? rgb_to_lab(s.R, s.G, s.B)
         : LabColor{ 0.0, 0.0, 0.0 };
-    {
-        double linear_y = srgb_to_linear(L_broad);
-        lab_natural.L = 116.0 * f_lab(linear_y) - 16.0;
-    }
+    lab_natural.L = lab_L_from_luminance(L_broad);
 
     // 4) Emission contribution to chrominance
     double w_ha   = signal_weight(ha);
@@ -183,27 +192,29 @@ sRGBPixel ColorComposer::compose_pixel(const DerivedSlots& s) {
     last_emission_b_ = emission_b;
     last_chroma_scale_ = chroma_scale;
 
-    LabColor lab_final{
+    return LabColor{
         lab_natural.L,
         lab_natural.a + emission_a,
         lab_natural.b + emission_b
     };
+}
 
+sRGBPixel ColorComposer::map_to_srgb(const LabColor& lab_final) {
     // 5) Convert to sRGB, reducing chroma until the colour fits.
     //
     // Clamping channels is what destroys hue, and it does so in BOTH
     // directions. Lupton et al. 2004 give the fix for a channel above 1
     // (rescale all three by their maximum), but the emission palette is
-    // saturated enough -- a* of +50 to +60 -- that at the low luminance of
-    // real narrowband data the conversion lands NEGATIVE in green, and
-    // flooring that to zero flattens the hue just as badly. On the M16 HaO3
-    // corpus that left green identically zero across all 24.5 million
-    // pixels even after the chrominance itself was correct.
+    // saturated enough -- a* of +50 to +60 -- that at low luminance the
+    // conversion lands NEGATIVE in green, and flooring that to zero flattens
+    // the hue just as badly.
     //
     // So gamut mapping happens in Lab, not sRGB: hold L and the hue angle,
     // and walk chroma toward the neutral axis until every channel is in
     // range. Scaling a and b together preserves the hue angle exactly, which
-    // is the property the whole line-ratio argument depends on.
+    // is the property the whole line-ratio argument depends on. And it
+    // happens at the L* the VIEWER sees: for the stretched output that is the
+    // stretched luminance, never the linear one (see compose_lab).
     sRGBPixel out = lab_to_srgb(lab_final);
     if (out_of_gamut(out)) {
         ++gamut_clipped_;
@@ -228,6 +239,10 @@ sRGBPixel ColorComposer::compose_pixel(const DerivedSlots& s) {
         last_gamut_chroma_scale_ = 1.0;
     }
     return out;
+}
+
+sRGBPixel ColorComposer::compose_pixel(const DerivedSlots& s) {
+    return map_to_srgb(compose_lab(s));
 }
 
 } // namespace nukex

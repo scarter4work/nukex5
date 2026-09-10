@@ -831,6 +831,10 @@ bool NukeXInstance::ExecuteGlobal()
    // knows more than STF does -- was the one output that never saw the
    // colour science.
    nukex::Image composed_image;
+   // Hoisted: the stretch below reuses the composer -- with the chroma gate
+   // the compose step measured -- for the emission-line route.
+   nukex::ColorComposer composer;
+   bool have_emission_slots = false;
 
    // ── ColorComposer-driven 3-channel sRGB output (Task 12) ─────
    //
@@ -846,8 +850,6 @@ bool NukeXInstance::ExecuteGlobal()
       const int h = result.derived.height;
       const int N = w * h;
 
-      nukex::ColorComposer composer;
-
       // Pre-resolve the emission slot pointers the chroma gate samples.
       // compose_slots_to_image resolves the full set once for itself.
       auto slot_ptr = [&]( const std::string& name ) -> const float* {
@@ -857,6 +859,7 @@ bool NukeXInstance::ExecuteGlobal()
       const float* Ha_p   = slot_ptr( "Ha"   );
       const float* OIII_p = slot_ptr( "OIII" );
       const float* SII_p  = slot_ptr( "SII"  );
+      have_emission_slots = ( Ha_p != nullptr ) || ( OIII_p != nullptr ) || ( SII_p != nullptr );
 
       // Chroma gate, driven by the stack's own statistics rather than a
       // constant. Normalising the emission chrominance by its total makes
@@ -975,8 +978,29 @@ bool NukeXInstance::ExecuteGlobal()
       // luminance as transparency, unstretched, on every OSC and LRGB run.
       const bool have_colour =
           nukex::slots_have_colour( result.derived.slots ) && !composed_image.empty();
+
+      // Emission-line data takes a different route. The composed image is
+      // gamut-mapped at the LINEAR luminance of the data, where L* is a few
+      // units and sRGB holds almost no chroma, so the palette has already
+      // been walked to grey by the time it reaches the stretch -- measured on
+      // M16: raw channels 0.099, composed 0.018, stretched 0.011. Hue and
+      // chroma must not depend on brightness (Lupton et al. 2004), so they
+      // stay the linear line ratios; only LIGHTNESS is stretched. The
+      // luminance plane goes through the stretch alone, and the colour is
+      // composed at the stretched L*, gamut-mapped once, there.
+      //
+      // Broadband stacks keep the composed-image route: their chroma is the
+      // natural Lab chroma of the RGB data, which is small at low luminance
+      // by construction and would not grow with L* the way the palette does.
+      const bool emission_route = have_colour && have_emission_slots;
+      nukex::Image emission_luminance;
+      if ( emission_route )
+         emission_luminance = nukex::compose_luminance_image(
+             result.derived.width, result.derived.height, result.derived.slots );
       const nukex::Image& stretch_source =
-          have_colour ? composed_image : result.stacked;
+          emission_route ? emission_luminance
+        : have_colour    ? composed_image
+                         : result.stacked;
 
       nukex::FrameMetadata meta = nukex::FITSReader::read_headers( light_paths.front() );
 
@@ -1085,6 +1109,16 @@ bool NukeXInstance::ExecuteGlobal()
          pipeline.ops.push_back( std::move( finishing_op ) );
       }
       pipeline.execute( stretched );
+
+      if ( emission_route )
+      {
+         // Colour at the stretched lightness. Same slots, same gate, same
+         // palette as the composed window; only L* differs.
+         stretched = nukex::compose_slots_with_luminance(
+             result.derived.width, result.derived.height, result.derived.slots,
+             composer, stretched );
+         progress.message( "Emission-line colour composed at the stretched luminance." );
+      }
 
       int sw  = stretched.width();
       int sh  = stretched.height();

@@ -44,4 +44,30 @@ Image compose_slots_to_image(
     const std::unordered_map<std::string, std::vector<float>>& slots,
     ColorComposer& composer);
 
+/// One-channel image of the composer's own luminance per pixel
+/// (ColorComposer::luminance_of): native L, else rec709 of RGB, else the
+/// emission total. This is what an emission-line stack hands to the stretch.
+Image compose_luminance_image(
+    int width, int height,
+    const std::unordered_map<std::string, std::vector<float>>& slots);
+
+/// Compose with an EXTERNAL luminance. Hue and chroma come from the slots
+/// exactly as in compose_slots_to_image -- linear line ratios through the
+/// chroma gate -- but L* is taken from `luminance` (one channel, same size),
+/// and the gamut walk happens once, at that L*.
+///
+/// With `luminance` == compose_luminance_image(slots) this is
+/// compose_slots_to_image to the float rounding of the luminance plane
+/// (differences in the 7th decimal). With a STRETCHED luminance it is the
+/// cure for the dual-narrowband colour loss: the palette that had to be
+/// walked to grey at L* 3 fits as composed at L* 50.
+///
+/// Returns an empty Image when `luminance` is not a one-channel image of the
+/// given size.
+Image compose_slots_with_luminance(
+    int width, int height,
+    const std::unordered_map<std::string, std::vector<float>>& slots,
+    ColorComposer& composer,
+    const Image& luminance);
+
 } // namespace nukex

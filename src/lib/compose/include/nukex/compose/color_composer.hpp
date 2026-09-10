@@ -7,10 +7,12 @@
 
 namespace nukex {
 
-// All slot values are sRGB-encoded intensities in [0, 1]. Producers
-// (Phase B derived-slot accumulator) are responsible for staying in
-// range; negative values fall through compose_pixel's gamut counter
-// and are silently clipped to 0.
+// Slot values are the stack's own LINEAR intensities, nominally in [0, 1];
+// the derived emission slots are a Q-solve of the raw channels and are not
+// bounded above. The composer reads a luminance through the sRGB transfer
+// function as if it were display-encoded (that is what makes the grey axis
+// an identity), which is why linear narrowband data lands at L* of a few
+// units: dark, but not colourless. Negative values are treated as absence.
 struct DerivedSlots {
     // Broadband channels (any may be zero if not in batch)
     double L = 0.0;
@@ -43,6 +45,31 @@ public:
     void set_continuum_coefficients(const ContinuumK& k) { continuum_ = k; }
 
     sRGBPixel compose_pixel(const DerivedSlots& s);
+
+    /// The two halves of compose_pixel, separately.
+    ///
+    /// compose_lab is everything before the gamut: L* from the composer's own
+    /// luminance (luminance_of), chroma from the natural RGB plus the gated
+    /// emission palette. map_to_srgb is the gamut walk and the conversion.
+    /// compose_pixel(s) == map_to_srgb(compose_lab(s)), bit for bit.
+    ///
+    /// They are separate because of where the gamut walk happens. Real
+    /// narrowband data is dark: an emission total of 0.05 puts L* at 3.6,
+    /// where sRGB holds almost no chroma, and the palette is walked to grey
+    /// BEFORE any stretch runs -- measured on M16, saturation 0.099 in the
+    /// raw channels to 0.011 in the stretched output. The stretch route
+    /// therefore takes compose_lab, replaces L* with the L* of the STRETCHED
+    /// luminance, and maps once, there. Hue and chroma stay exactly the
+    /// line-ratio values Lupton et al. 2004 require; only lightness moves.
+    LabColor  compose_lab(const DerivedSlots& s);
+    sRGBPixel map_to_srgb(const LabColor& lab);
+
+    /// The composer's luminance for a slot tuple, in the slots' own units:
+    /// native L, else rec709 of RGB, else the emission total capped at 1.
+    static double luminance_of(const DerivedSlots& s);
+
+    /// The L* the composer assigns to a luminance value in [0, 1].
+    static double lab_L_from_luminance(double v);
 
     // Chroma gate. Normalising the emission chrominance by the total
     // emission weight makes hue a pure line ratio (Lupton et al. 2004,
