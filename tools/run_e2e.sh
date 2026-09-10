@@ -12,7 +12,9 @@
 set -euo pipefail   # pipefail so `PixInsight.sh … | tee` surfaces PI crashes
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MANIFEST="${REPO}/test/fixtures/e2e_manifest.json"
+# NUKEX_E2E_MANIFEST points the run at another manifest (an attribution or
+# bisect run with instance_overrides); the default is the repo corpus.
+MANIFEST="${NUKEX_E2E_MANIFEST:-${REPO}/test/fixtures/e2e_manifest.json}"
 BUILD_DIR="${NUKEX_BUILD_DIR:-${REPO}/build}"
 E2E_LOG="${BUILD_DIR}/e2e.log"
 
