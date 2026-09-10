@@ -28,7 +28,7 @@
         }
       ],
       "golden_frozen": true,
-      "golden_note": "Frozen floor re-cut 2026-09-08 for v5.0.4.1, one release after the v5.0.4.0 re-cut. ONE attributed cause: the auto-stretch's default sky level drops from 0.25 to 0.12. The evidence that it IS the only cause is in the diff -- `stretched` moved (8ecab0f9 -> 9a1051f4) and NOTHING else did. stacked fe52757a, noise dcf69a6e and composed 7b1b49e6 are bit-identical to v5.0.4.0, and so are all three sweeps (GHS cf23fb5c, MTF 8be5f2d8, ArcSinh d93f9aa7), because those curves do not use VeraLux's auto_tune. That is the exact opposite signature to the v5.0.4.0 re-cut, where every hash moved because the stacked pixels themselves had changed; here the stack is untouched and only the one output that reads the sky target moved. This corpus is mono (nc=1), so v5.0.4.1's other fix -- colour stacks no longer handing their synthesized luminance to PixInsight as an alpha channel -- cannot touch it, and the hashes confirm it did not. Why the change: 0.25 is the screen-autostretch convention, but a screen stretch is something you look through rather than keep. It spends a quarter of the output range on empty sky and leaves the subject on a bright grey pedestal. Measured on the composed output of four real corpora, 0.12 raises signal saturation 1.34x to 1.72x (M33 0.069->0.118, M27 2023 0.082->0.110, M27 2025 0.067->0.115, M16 dual-NB 0.473->0.691) and clips nothing at either end -- black stays 0.0000% and white is unmoved, because the shadow point is bounded independently of the sky target. It remains a user control. Do not re-cut this floor without the same kind of measurement."
+      "golden_note": "Frozen floor re-cut 2026-09-10 for v5.0.5.1 (pixels identical to v5.0.5.0, which shipped WITHOUT this re-cut). TWO attributed causes. (1) v5.0.5.0's sky-tilt removal moved stacked fe52757a->43ef3bbf, stretched 9a1051f4->46fb2161, composed 7b1b49e6->1cba7236 and all three sweeps (GHS cf23fb5c->ead81689, MTF 8be5f2d8->573009f3, ArcSinh d93f9aa7->09722d4b); with the tilt OFF all seven came back bit-identical to the v5.0.4.1 golden, so nothing else since v5.0.4.1 touched a pixel of them. (2) v5.0.4.3's robust across-frame fallback noise scale (kernel 2 MAD instead of Welford -- the path every corpus here takes, because none carries RDNOISE) moved noise dcf69a6e->dd20195b, identically with the tilt on or off. Console: tilt 1.334e-03 across the frame (dx +3.330e-04, dy +1.292e-03), identical across five runs today; Noise check measured 2.370e-04 predicted 2.281e-04 ratio 1.06x with the tilt on or off, as a neighbour-difference estimator must be blind to a plane. Attribution method: the same build run twice, once with removeSkyGradient=false via instance_overrides, compared against the v5.0.4.1 goldens. Every hash that came back bit-identical with the tilt off was moved by the tilt ALONE; the one that moved either way was moved by something tilt-independent. History: 2026-09-08 re-cut for v5.0.4.1 (only `stretched` moved: auto-stretch sky level 0.25->0.12, measured to raise saturation 1.34x-1.72x and clip nothing); v5.0.4.0 per-frame normalisation moved everything. Do not re-cut this floor without the same kind of controlled attribution."
     },
     {
       "name": "bayer_rgb_m27_2023",
@@ -42,7 +42,8 @@
       "wall_time_budget_s": 10800,
       "min_frames_ok_alignment": 30,
       "min_bright_saturation": 0.1,
-      "min_bright_saturation_note": "measured 0.121 on v5.0.5.0"
+      "min_bright_saturation_note": "measured 0.121 on v5.0.5.0",
+      "golden_note": "Re-cut 2026-09-10 for v5.0.5.1 (pixels identical to v5.0.5.0). Tilt removal moved stacked d4773f6b->7b490825, stretched c5bfaa34->a67311b6, composed 26db4fa5->2826191b (all three back to the golden with the tilt off); v5.0.4.3's robust fallback noise scale moved noise c25efa8e->c5d71a29 either way. Noise check on the fixed console: measured 3.732e-05 predicted 2.974e-05 ratio 1.28x -- the three numbers now reconcile. Attribution method: the same build run twice, once with removeSkyGradient=false via instance_overrides, compared against the v5.0.4.1 goldens. Every hash that came back bit-identical with the tilt off was moved by the tilt ALONE; the one that moved either way was moved by something tilt-independent."
     },
     {
       "name": "bayer_nb_hao3_m16",
@@ -59,7 +60,8 @@
       "min_frames_ok_alignment": 12,
       "visual_bar": "no green cast in the nebula; Ha red, OIII teal; NUKEX_QE_CONFIDENCE = database",
       "min_bright_saturation": 0.07,
-      "min_bright_saturation_note": "2026-09-04 produced 0.085; today 0.011 -- FAILS BY DESIGN"
+      "min_bright_saturation_note": "2026-09-04 produced 0.085; today 0.011 -- FAILS BY DESIGN",
+      "golden_note": "Re-cut 2026-09-10 for v5.0.5.1 (pixels identical to v5.0.5.0). NOTE this case FAILS BY DESIGN on min_bright_saturation (0.0105 vs floor 0.07) and the golden is therefore not compared until the dual-narrowband colour regression is fixed; it is recorded so that fix's diff shows exactly what moved. Tilt removal moved stacked bb3a3e85->489d544c, stretched 893ed6a2->de070085, composed 1d84c5b5->0fccc4c1 (all back to the golden with the tilt off); v5.0.4.3's robust fallback noise scale moved noise da5e64e2->ae14d804 either way. Attribution method: the same build run twice, once with removeSkyGradient=false via instance_overrides, compared against the v5.0.4.1 goldens. Every hash that came back bit-identical with the tilt off was moved by the tilt ALONE; the one that moved either way was moved by something tilt-independent."
     },
     {
       "name": "mono_lrgb_m27_2025",
@@ -77,7 +79,8 @@
       "skip_reason": "",
       "note": "Re-enabled 2026-09-05. Phase B now carries a per-channel frame set: CacheSig gained a routing key so each mono filter gets its own cache, ShadowBuffers::n_frames is per channel, and global_frame_of maps each channel's local slot to the batch-global frame its FrameStats belong to. The golden for this case has never existed -- the previous one was deleted because it recorded three empty channels -- so it is generated fresh in this re-baseline.",
       "min_bright_saturation": 0.06,
-      "min_bright_saturation_note": "measured 0.071 on v5.0.5.0"
+      "min_bright_saturation_note": "measured 0.071 on v5.0.5.0",
+      "golden_note": "Re-cut 2026-09-10 for v5.0.5.1 (pixels identical to v5.0.5.0). Tilt removal moved stacked c13304cf->87b53af8, stretched 29decca4->3c22c739, composed 790648fb->7f8a87b5 (all back to the golden with the tilt off); v5.0.4.3's robust fallback noise scale moved noise 00fca590->c47abf7b either way. Noise check: measured 3.512e-04 predicted 2.567e-04 ratio 1.39x. Attribution method: the same build run twice, once with removeSkyGradient=false via instance_overrides, compared against the v5.0.4.1 goldens. Every hash that came back bit-identical with the tilt off was moved by the tilt ALONE; the one that moved either way was moved by something tilt-independent."
     },
     {
       "name": "bayer_nb_s2o3_placeholder",
