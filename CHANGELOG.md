@@ -10,7 +10,7 @@
   answer for it at all. It now measures that ramp and removes it, and tells you
   what it took off:
 
-      Sky gradient: channel 0 -- removed a tilt of 1.470e-03 across the frame
+      Sky gradient: channel 0 -- removed a tilt of 1.334e-03 across the frame (dx +3.330e-04, dy +1.292e-03)
 
   On the 65-frame NGC7635 test set that tilt was **six times the image's own
   pixel noise** from one corner to the other, so it is well worth removing.
