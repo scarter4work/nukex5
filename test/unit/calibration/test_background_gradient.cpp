@@ -125,3 +125,84 @@ TEST_CASE("BackgroundGradient: object flux survives subtraction", "[gradient]") 
     const float after = img.at(64, 54, 0) - img.at(64, 58, 0);
     REQUIRE(after == Catch::Approx(before).margin(0.002f));
 }
+
+// ── The failure that was measured, not imagined ──────────────────────────
+//
+// A bright object with its own ramp, on one side of the frame, dragged the
+// previous fit at 30% coverage: fitted dx +0.26 where the truth was 0. The
+// residual scatter was measured on ALL samples, so the object inflated it
+// until the clip could no longer exclude the object. The fit now seeds from
+// the darkest samples and measures scatter on what it keeps.
+
+namespace {
+Image sky_with_object(int w, int h, float dx, float dy, double cover, unsigned seed = 11) {
+    Image img = ramp_image(w, h, 0.20f, dx, dy, 0.0005f, seed);
+    const int x_obj = static_cast<int>(w * (1.0 - cover));
+    for (int y = 0; y < h; y++)
+        for (int x = x_obj; x < w; x++)
+            img.at(x, y, 0) += 0.15f + 0.10f * static_cast<float>(x - x_obj) / (w - x_obj);
+    return img;
+}
+} // namespace
+
+TEST_CASE("BackgroundGradient: a bright ramped object covering up to 80% of the "
+          "frame does not drag the fit", "[gradient]") {
+    for (double cover : {0.30, 0.55, 0.80}) {
+        for (bool tilted : {false, true}) {
+            const float dx = tilted ? 0.006f : 0.0f, dy = tilted ? 0.015f : 0.0f;
+            Image img = sky_with_object(256, 192, dx, dy, cover);
+            auto m = BackgroundGradient::fit_planar(img, 0);
+            INFO("cover " << cover << " tilted " << tilted);
+            REQUIRE(m.valid);
+            REQUIRE(m.dx == Catch::Approx(dx).margin(0.002f));
+            REQUIRE(m.dy == Catch::Approx(dy).margin(0.002f));
+            REQUIRE(m.level == Catch::Approx(0.20f).margin(0.003f));
+        }
+    }
+}
+
+TEST_CASE("BackgroundGradient: sampling is restricted to the region, so a dark "
+          "noisy rim outside it cannot tilt the fit", "[gradient]") {
+    // The stack's thin-coverage rim: one-sided here (drift toward one edge),
+    // darker and ten times noisier than the interior, at maximum leverage.
+    const int W = 256, H = 192, RIM = 24;
+    Image img = ramp_image(W, H, 0.20f, 0.0f, 0.0f, 0.0005f);
+    std::mt19937 rng(5);
+    std::normal_distribution<float> loud(0.0f, 0.005f);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < RIM; x++)
+            img.at(x, y, 0) = 0.197f + loud(rng);
+
+    const FitRegion interior{RIM, 0, W - 1, H - 1};
+    auto inside = BackgroundGradient::fit_planar(img, 0, &interior);
+    REQUIRE(inside.valid);
+    REQUIRE(std::fabs(inside.dx) < 0.0005f);
+    REQUIRE(std::fabs(inside.dy) < 0.0005f);
+    // The model is still expressed over the FULL frame, so the level is the
+    // frame-centre sky, not the region's.
+    REQUIRE(inside.level == Catch::Approx(0.20f).margin(0.001f));
+
+    // Without the region the rim is sampled; whatever it does, it must not be
+    // what the interior-only fit does, or the region would be pointless.
+    auto whole = BackgroundGradient::fit_planar(img, 0);
+    REQUIRE(std::fabs(whole.dx) > std::fabs(inside.dx));
+}
+
+TEST_CASE("BackgroundGradient: collinear samples cannot define a plane and are "
+          "reported invalid", "[gradient]") {
+    // Every non-zero sample on one row: the normal matrix is singular.
+    Image img(128, 96, 1);
+    for (int y = 0; y < 96; y++)
+        for (int x = 0; x < 128; x++) img.at(x, y, 0) = 0.0f;
+    for (int x = 0; x < 128; x++) img.at(x, 40, 0) = 0.2f;
+    auto m = BackgroundGradient::fit_planar(img, 0);
+    REQUIRE_FALSE(m.valid);
+}
+
+TEST_CASE("BackgroundGradient: amplitude is the corner-to-corner range", "[gradient]") {
+    GradientModel m; m.valid = true; m.dx = 1.0e-3; m.dy = -1.0e-3;
+    // The brightest and darkest corners differ by |dx| + |dy|, not hypot.
+    REQUIRE(BackgroundGradient::amplitude(m) == Catch::Approx(2.0e-3));
+    GradientModel none;
+    REQUIRE(BackgroundGradient::amplitude(none) == 0.0);
+}

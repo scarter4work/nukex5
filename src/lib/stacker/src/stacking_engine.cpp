@@ -33,7 +33,6 @@
 #include "nukex/fitting/model_selector.hpp"
 #include "nukex/fitting/robust_stats.hpp"
 #include "nukex/calibration/background_gradient.hpp"
-#include "nukex/combine/spatial_context.hpp"
 #include "nukex/combine/output_assembler.hpp"
 #include "nukex/gpu/gpu_executor.hpp"
 
@@ -1262,9 +1261,18 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // and the Q-solved derived slots all see the flattened sky. Only the tilt
     // comes off; the sky LEVEL is left alone because the auto-stretch reads it
     // as its shadow target.
+    //
+    // The plane is SAMPLED inside the rectangle every frame contributed to.
+    // The thin-coverage rim outside it is several times noisier than the
+    // interior and sits at maximum leverage for a plane fit, so sampling it
+    // manufactures a tilt. The same rectangle is applied as the coverage trim
+    // below; it is computed once here.
+    const TrimBounds coverage = full_coverage_rect(cube);
     if (config_.remove_sky_gradient && !stacked.empty()) {
+        const FitRegion region{coverage.x0, coverage.y0, coverage.x1, coverage.y1};
+        const FitRegion* roi = coverage.applied ? &region : nullptr;
         for (int ch = 0; ch < stacked.n_channels(); ch++) {
-            const GradientModel m = BackgroundGradient::fit_planar(stacked, ch);
+            const GradientModel m = BackgroundGradient::fit_planar(stacked, ch, roi);
             if (!m.valid) {
                 obs.message("Sky gradient: channel " + std::to_string(ch)
                             + " -- too little background to fit, left as is.");
@@ -1275,7 +1283,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             char msg[192];
             std::snprintf(msg, sizeof(msg),
                           "Sky gradient: channel %d -- removed a tilt of %.3e "
-                          "across the frame (dx %+.3e, dy %+.3e)",
+                          "corner to corner (dx %+.3e, dy %+.3e)",
                           ch, amp, m.dx, m.dy);
             obs.message(msg);
         }
@@ -1515,7 +1523,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // picture. The one genuinely dead line -- a red column pushed off the
     // source by channel registration -- goes with them.
     {
-        const TrimBounds trim = full_coverage_rect(cube);
+        const TrimBounds& trim = coverage;
         if (trim.applied) {
             const int tw = trim.width(), th = trim.height();
             Image ts = stacked.cropped(trim.x0, trim.y0, tw, th);
@@ -1608,42 +1616,32 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     // noise_map is a model of what the noise ought to be; measured_noise is
     // what it is. A ratio above 1 says the stack is noisier than its own model
     // predicts, which is exactly the signature that hid for three releases.
+    // Both medians are printed with the ratio, and the ratio IS their
+    // quotient, so a reader who divides gets the number on the line.
     {
-        const double ratio =
-            OutputAssembler::measured_vs_predicted_ratio(measured_noise, noise_map);
-        if (ratio > 0.0) {
-            // Both medians are reported, not just the ratio: a ratio alone
-            // cannot distinguish "the stack is clean" from "both numbers are
-            // wrong in the same direction", and the predicted term depends on
-            // FITS gain keywords that are not always what they claim to be.
-            double sm = 0.0, sp = 0.0;
-            {
-                std::vector<float> mv;
-                mv.reserve(1024);
-                for (int y = 0; y < measured_noise.height(); ++y)
-                    for (int x = 0; x < measured_noise.width(); ++x) {
-                        const float m = measured_noise.at(x, y, 0);
-                        if (m > 0.0f) mv.push_back(m);
-                    }
-
-                auto med = [](std::vector<float>& v) -> double {
-                    if (v.empty()) return 0.0;
-                    std::size_t k = v.size() / 2;
-                    std::nth_element(v.begin(), v.begin() + k, v.end());
-                    return v[k];
-                };
-                sm = med(mv);
-                // Must use the SAME luminance combination the ratio uses.
-                // Channel 0's median is a different quantity on a colour
-                // stack, and printing it made a 1.05x read as 1.28x.
-                sp = OutputAssembler::predicted_luminance_median(noise_map);
-            }
-            char msg[256];
+        const OutputAssembler::NoiseCheck nc =
+            OutputAssembler::noise_check(measured_noise, noise_map);
+        if (nc.comparable) {
+            // Which basis the prediction stands on. The CCD model needs gain
+            // AND read noise from the FITS header; without them a frame's
+            // predicted variance is the robust across-frame scale, and a
+            // reader should know which one they are looking at, because the
+            // two can disagree by the very factor the check is meant to show.
+            int with_keywords = 0;
+            for (const auto& fs : frame_stats)
+                if (fs.has_noise_keywords) ++with_keywords;
+            char msg[320];
+            std::snprintf(msg, sizeof(msg),
+                          "Noise model: %d of %zu frames carry usable gain and "
+                          "read-noise keywords (CCD model); the rest use the "
+                          "robust across-frame scale.",
+                          with_keywords, frame_stats.size());
+            obs.message(msg);
             std::snprintf(msg, sizeof(msg),
                           "Noise check: measured %.3e, predicted %.3e, "
                           "ratio %.2fx (1.00x means the stack is as clean as "
                           "its model says)",
-                          sm, sp, ratio);
+                          nc.measured_median, nc.predicted_median, nc.ratio);
             obs.message(msg);
         }
     }
