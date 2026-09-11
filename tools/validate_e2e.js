@@ -432,6 +432,11 @@ function collectPrimaryHashes(primary) {
       if (primary.pixel_hashes.noise)     out.noise     = primary.pixel_hashes.noise.fnv1a_hex;
       if (primary.pixel_hashes.stretched) out.stretched = primary.pixel_hashes.stretched.fnv1a_hex;
       if (primary.pixel_hashes.composed)  out.composed  = primary.pixel_hashes.composed.fnv1a_hex;
+      // Emission-line planes, when the stack produced them: recorded AND
+      // compared. A hash that is saved but never checked is not a test.
+      if (primary.pixel_hashes.Ha)        out.Ha        = primary.pixel_hashes.Ha.fnv1a_hex;
+      if (primary.pixel_hashes.OIII)      out.OIII      = primary.pixel_hashes.OIII.fnv1a_hex;
+      if (primary.pixel_hashes.SII)       out.SII       = primary.pixel_hashes.SII.fnv1a_hex;
    }
    return out;
 }
