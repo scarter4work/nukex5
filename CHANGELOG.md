@@ -1,5 +1,59 @@
 # NukeX — Changelog
 
+## v5.0.5.3 — 2026-09-10
+
+### Fixed
+
+- **Narrowband hue is now the ratio of line *fluxes*, not of pedestals.** The
+  composer weighed the Ha and OIII planes as they came out of the line solve,
+  and those planes carry the sky pedestal of the channels they were solved
+  from. On the 12-frame M16 corpus that pedestal is 25 times the nebula's own
+  signal (Ha sky 0.0247, nebula +0.0010), so every nebula pixel was a 53% Ha
+  "mix" and the palette blend landed between the two entries: magenta. Each
+  line's sky level now comes off before the ratio; the same nebula is 87% Ha,
+  which is red. The console reports the levels it subtracted.
+
+- **The palette itself no longer has a magenta in it.** Ha and OIII sat 124
+  degrees apart in Lab, so even a genuine mix passed through magenta. Ha is
+  now red-orange, OIII teal, nearly opposite: mixes desaturate toward a warm
+  grey and white, the additive HOO look, and a test asserts no blend lands in
+  the magenta sector. SII is a deeper red than Ha so the two stay distinct.
+
+- **The Ha, OIII and SII planes open as their own windows** (NukeX_Ha,
+  NukeX_OIII, NukeX_SII), in the stack's linear units before any palette.
+
+### Memory
+
+- **The voxel record no longer pushes a machine into swap.** At 604 bytes per
+  voxel a 24 MP OSC stack is a 14.8 GB record; held in memory it left a 30 GB
+  machine 6 GB and swapping. When the record would exceed half of the memory
+  available, it now lives in a mapped, unlinked file in the cache directory
+  instead: the same run kept 18 GB available with bit-identical output. The
+  file costs about 30% in wall time on that corpus, so a record that fits stays
+  in memory at full speed; the console says which and why.
+
+- **The default cache directory is no longer /tmp.** On Fedora and most
+  systemd distributions /tmp is a RAM disk, so the frame cache — 13 GB for a
+  33-frame 24 MP session — was living in memory. The default is now
+  `~/.cache/nukex4/cache`, created on first use, and NukeX warns when the
+  chosen directory is RAM-backed.
+
+### Diagnostics
+
+- The noise check measures on a named plane: the L plane when there is one
+  (real on LRGB mono, synthesized on OSC), else R, G and B by name. On LRGB
+  mono the "luminance" had been whichever planes sorted first. The console
+  names the plane.
+- The synthesized L plane of an OSC stack now takes the rec709 combination of
+  the R, G and B sky tilts rather than its own fit, so the luminance the
+  composer reads keeps the same plane as the chroma beside it.
+- The measured-noise estimator does a third of the sorting it did in 5.0.5.1,
+  bit-identically.
+
+**Stacked images are unchanged except the synthesized L plane of OSC stacks.
+The stretched and composed images of emission-line stacks change (hue), and of
+OSC stacks slightly (luminance plane).**
+
 ## v5.0.5.2 — 2026-09-10
 
 ### Fixed
