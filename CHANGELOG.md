@@ -1,5 +1,30 @@
 # NukeX — Changelog
 
+## v5.0.7.0 — 2026-09-10
+
+### New
+
+- **The noise check now says what its ratio is made of.** An odd/even
+  half-stack experiment on the four regression sessions settled a question the
+  instrument had been raising since it shipped: on colour data it read about
+  2.5x the model while mono read 1.1x. The difference is not the estimator.
+  On the 24 MP OSC session 41% to 59% of the measured noise variance, per
+  channel, is a *fixed pattern* — pixel response non-uniformity and debayer
+  residuals, present identically in every frame, which no across-frame model
+  can see and which flats remove. None of the sessions used flats. With that
+  removed, the stochastic noise is 1.09x to 1.14x the model on every channel,
+  the same as mono.
+
+  NukeX now runs that experiment on every stack. While fitting each pixel it
+  also estimates the even-numbered and odd-numbered frames separately, from the
+  same samples with the same estimator; the difference of those two half-stacks
+  cancels anything common to both, and its noise is the stochastic part. The
+  console prints, beside the ratio, the stochastic noise with its own ratio to
+  the model, the fixed-pattern noise, its share of the variance, and, when that
+  share passes 30%, that this is what flats remove.
+
+**Pixel output is unchanged. Console only.**
+
 ## v5.0.6.2 — 2026-09-10
 
 ### Fixed
