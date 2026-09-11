@@ -39,13 +39,28 @@ namespace nukex {
 bool slots_have_colour(
     const std::unordered_map<std::string, std::vector<float>>& slots);
 
-/// One-channel image of the sky-subtracted emission total per pixel,
-/// sum over lines of max(0, line - composer.line_background_*()): the
-/// quantity the chroma gate judges.
+/// One-channel image of the SIGNED sky-subtracted emission total per pixel,
+/// sum over lines of (line - composer.line_background_*()). Signed, not
+/// clamped: clamping noise at zero lifts the sky's mean to +0.4 sigma, and
+/// this plane exists to be smoothed and judged against the sky.
 Image emission_total_image(
     int width, int height,
     const std::unordered_map<std::string, std::vector<float>>& slots,
     const ColorComposer& composer);
+
+/// Where the chroma gate's ramp sits on a (smoothed) emission-total plane.
+///
+/// `sky` is the plane's lower quartile -- the sky level even when an object
+/// covers most of the frame, where the median is nebula. `sigma` is the
+/// noise measured from lag-16 pixel differences (both directions, each
+/// centred), which cancels structure: the MAD of the plane itself read
+/// M16's nebula as noise 2.7x too large and put the gate inside the nebula.
+/// The ramp is sky + 3 sigma to sky + 6 sigma.
+struct GateStats {
+    double sky = 0.0, sigma = 0.0, start = 0.0, full = 0.0;
+    bool   valid = false;
+};
+GateStats gate_statistics(const Image& smoothed_total);
 
 /// Separable box mean of a one-channel image over (2r+1)^2, edges clamped.
 Image box_smooth(const Image& plane, int radius);

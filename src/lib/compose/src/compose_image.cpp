@@ -1,5 +1,6 @@
 #include "nukex/compose/compose_image.hpp"
 #include <algorithm>
+#include <cmath>
 
 namespace nukex {
 
@@ -160,9 +161,9 @@ Image emission_total_image(
     float* dst = out.channel_data(0);
     for (std::size_t p = 0; p < n; ++p) {
         double t = 0.0;
-        if (sp.Ha)   t += std::max(0.0, static_cast<double>(sp.Ha[p])   - sha);
-        if (sp.OIII) t += std::max(0.0, static_cast<double>(sp.OIII[p]) - so3);
-        if (sp.SII)  t += std::max(0.0, static_cast<double>(sp.SII[p])  - ss2);
+        if (sp.Ha)   t += static_cast<double>(sp.Ha[p])   - sha;
+        if (sp.OIII) t += static_cast<double>(sp.OIII[p]) - so3;
+        if (sp.SII)  t += static_cast<double>(sp.SII[p])  - ss2;
         dst[p] = static_cast<float>(t);
     }
     return out;
@@ -199,6 +200,75 @@ Image box_smooth(const Image& plane, int radius) {
         }
     }
     return res;
+}
+
+GateStats gate_statistics(const Image& plane) {
+    GateStats g;
+    if (plane.empty() || plane.n_channels() != 1) return g;
+    const int w = plane.width(), h = plane.height();
+    const float* d = plane.channel_data(0);
+    const std::size_t n = static_cast<std::size_t>(w) * h;
+    const std::size_t stride = std::max<std::size_t>(1, n / 400000);
+
+    // Sky: the lower quartile of the plane.
+    std::vector<float> v;
+    v.reserve(n / stride + 1);
+    for (std::size_t i = 0; i < n; i += stride) v.push_back(d[i]);
+    if (v.size() < 64) return g;
+    const std::size_t q = v.size() / 4;
+    std::nth_element(v.begin(), v.begin() + q, v.end());
+    g.sky = v[q];
+
+    // Noise: lag-16 differences, each direction centred on its own median,
+    // then the pooled MAD. Anything smooth cancels; the lag clears the
+    // smoothing window and the pixel correlation of a resampled stack.
+    constexpr int LAG = 16;
+    if (w <= LAG || h <= LAG) return g;
+    std::vector<float> dh, dv;
+    dh.reserve(n / stride + 1); dv.reserve(n / stride + 1);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x + LAG < w; x += static_cast<int>(std::max<std::size_t>(1, stride / 4)))
+            dh.push_back(d[static_cast<std::size_t>(y) * w + x + LAG] - d[static_cast<std::size_t>(y) * w + x]);
+    for (int x = 0; x < w; x++)
+        for (int y = 0; y + LAG < h; y += static_cast<int>(std::max<std::size_t>(1, stride / 4)))
+            dv.push_back(d[static_cast<std::size_t>(y + LAG) * w + x] - d[static_cast<std::size_t>(y) * w + x]);
+    auto median_of = [](std::vector<float>& a) {
+        const std::size_t k = a.size() / 2;
+        std::nth_element(a.begin(), a.begin() + k, a.end());
+        return a[k];
+    };
+    if (dh.empty() || dv.empty()) return g;
+    std::vector<float> th = dh, tv = dv;
+    const float mh = median_of(th), mv = median_of(tv);
+    std::vector<float> dev;
+    dev.reserve(dh.size() + dv.size());
+    for (float x : dh) dev.push_back(std::fabs(x - mh));
+    for (float x : dv) dev.push_back(std::fabs(x - mv));
+    const double mad = median_of(dev);
+    g.sigma = 1.4826 * mad / std::sqrt(2.0);
+    if (!(g.sigma > 0.0)) return g;
+
+    // Sky: seed at the lower quartile, then an asymmetrically clipped median
+    // -- keep [s - 3 sigma, s + 1 sigma] and re-take the median -- which
+    // walks onto the sky's own peak. A fixed quantile cannot: with an object
+    // over 70% of the frame the lower quartile sits a full sigma into the
+    // sky's upper tail, and with an object over 90% it is object.
+    for (int it = 0; it < 6; ++it) {
+        std::vector<float> kept;
+        kept.reserve(v.size());
+        const float lo = static_cast<float>(g.sky - 3.0 * g.sigma);
+        const float hi = static_cast<float>(g.sky + 1.0 * g.sigma);
+        for (float x : v) if (x > lo && x < hi) kept.push_back(x);
+        if (kept.size() < 32) break;
+        const double next = median_of(kept);
+        const bool done = std::fabs(next - g.sky) < 0.01 * g.sigma;
+        g.sky = next;
+        if (done) break;
+    }
+    g.start = g.sky + 3.0 * g.sigma;
+    g.full  = g.sky + 6.0 * g.sigma;
+    g.valid = true;
+    return g;
 }
 
 } // namespace nukex

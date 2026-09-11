@@ -919,47 +919,22 @@ bool NukeXInstance::ExecuteGlobal()
          // down sevenfold and the outskirts keep their colour.
          gate_plane = nukex::box_smooth(
              nukex::emission_total_image( w, h, result.derived.slots, composer ), 3 );
-         std::vector<double> samples;
-         samples.reserve( static_cast<std::size_t>( N / stride ) + 1 );
-         if ( !gate_plane.empty() )
+         const nukex::GateStats gs = nukex::gate_statistics( gate_plane );
+         if ( gs.valid )
          {
-            const float* gp = gate_plane.channel_data( 0 );
-            for ( int p = 0; p < N; p += stride ) samples.push_back( gp[p] );
+            composer.set_chroma_gate( gs.start, gs.full );
+            Console().WriteLn( String().Format(
+               "Chroma gate on the 7x7-smoothed emission total: sky %.6f (lower quartile), "
+               "noise %.6f (lag-16 differences); no colour below %.6f (+3 sigma), full at %.6f (+6 sigma).",
+               gs.sky, gs.sigma, gs.start, gs.full ) );
          }
-         if ( !samples.empty() )
+         else
          {
-            const std::size_t mid = samples.size() / 2;
-            std::nth_element( samples.begin(), samples.begin() + mid, samples.end() );
-            const double median = samples[mid];
-            for ( double& v : samples )
-               v = std::fabs( v - median );
-            std::nth_element( samples.begin(), samples.begin() + mid, samples.end() );
-            const double mad = samples[mid];
-            // 1.4826 converts MAD to a Gaussian-equivalent sigma.
-            const double sigma = 1.4826 * mad;
-            if ( sigma > 0.0 )
-            {
-               // A DETECTION threshold, not a ramp from the sky median.
-               // Ramping from the median hands a pixel at +1 sigma a third of
-               // the palette, and 16% of sky pixels sit above +1 sigma: on
-               // M16 a third of the sky came out with saturation above 0.25
-               // -- red speckle. Measured on the same planes: the sky's
-               // darkest half never exceeds +3 sigma, the nebula body sits at
-               // +25 sigma, and the faint outskirts straddle 3 to 6. Chroma
-               // therefore starts at +3 sigma and is full at +6.
-               composer.set_chroma_gate( median + 3.0*sigma, median + 6.0*sigma );
-               Console().WriteLn( String().Format(
-                  "Chroma gate on the 7x7-smoothed emission total: no colour below %.6f (sky + 3 sigma), full colour at %.6f (sky + 6 sigma).",
-                  median + 3.0*sigma, median + 6.0*sigma ) );
-            }
-            else
-            {
-               // A constant emission field has no noise scale to gate on.
-               // Say so rather than silently leaving colour ungated.
-               Console().WarningLn(
-                  "Chroma gate disabled: emission slots have zero spread, "
-                  "so no sky level could be measured." );
-            }
+            // A constant emission field has no noise scale to gate on.
+            // Say so rather than silently leaving colour ungated.
+            Console().WarningLn(
+               "Chroma gate disabled: the emission total has no measurable noise, "
+               "so no sky level could be established." );
          }
       }
 

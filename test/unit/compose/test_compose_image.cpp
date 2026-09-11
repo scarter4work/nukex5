@@ -164,7 +164,7 @@ TEST_CASE("a gate plane overrides the pixel's own total in the chroma gate", "[c
     REQUIRE(hsv_saturation(p1) > 0.3);    // full palette: the gate said yes
 }
 
-TEST_CASE("emission_total_image subtracts the line backgrounds and clamps at zero", "[compose]") {
+TEST_CASE("emission_total_image is the SIGNED sum of sky-subtracted lines", "[compose]") {
     Slots slots;
     slots["Ha"]   = {0.030f, 0.010f};
     slots["OIII"] = {0.025f, 0.030f};
@@ -173,7 +173,36 @@ TEST_CASE("emission_total_image subtracts the line backgrounds and clamps at zer
     const Image t = emission_total_image(2, 1, slots, c);
     REQUIRE(t.n_channels() == 1);
     REQUIRE(t.at(0, 0, 0) == Catch::Approx(0.015f));   // 0.010 + 0.005
-    REQUIRE(t.at(1, 0, 0) == Catch::Approx(0.010f));   // max(0,-0.010) + 0.010
+    REQUIRE(t.at(1, 0, 0) == Catch::Approx(0.000f).margin(1e-6));   // -0.010 + 0.010: not clamped
+}
+
+TEST_CASE("gate_statistics finds the sky and the noise under an object covering "
+          "most of the frame", "[compose]") {
+    // Sky at 0 with noise sigma 0.001; an object of +0.05 with its own ramp
+    // covering 70% of the frame. The frame median is object; the MAD of the
+    // plane is structure. The gate must still find sky ~0 and noise ~0.001.
+    const int W = 400, H = 300;
+    Image plane(W, H, 1);
+    std::mt19937 rng(8);
+    std::normal_distribution<float> g(0.0f, 0.001f);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            float v = g(rng);
+            if (x >= static_cast<int>(W * 0.3)) v += 0.05f + 0.02f * static_cast<float>(x) / W;
+            plane.at(x, y, 0) = v;
+        }
+    const GateStats gs = gate_statistics(plane);
+    REQUIRE(gs.valid);
+    REQUIRE(std::fabs(gs.sky) < 0.0005);                         // sky, not object
+    REQUIRE(gs.sigma == Catch::Approx(0.001).epsilon(0.15));    // noise, not structure
+    REQUIRE(gs.start == Catch::Approx(gs.sky + 3 * gs.sigma));
+    REQUIRE(gs.full  == Catch::Approx(gs.sky + 6 * gs.sigma));
+    // Every object pixel is far above `full`; sky pixels essentially never reach `start`.
+    int sky_above = 0, sky_n = 0;
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < static_cast<int>(W * 0.3); x++) { sky_n++; if (plane.at(x, y, 0) > gs.start) sky_above++; }
+    REQUIRE(static_cast<double>(sky_above) / sky_n < 0.005);
+    REQUIRE(plane.at(W - 1, H / 2, 0) > gs.full);
 }
 
 TEST_CASE("box_smooth keeps a constant and spreads an impulse over the window", "[compose]") {
