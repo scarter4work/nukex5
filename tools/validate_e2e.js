@@ -89,12 +89,22 @@ function cacheDir(manifest) {
    return d;
 }
 
-function collectLights(dir, glob, max_frames) {
+function collectLights(dir, glob, max_frames, frame_stride, frame_offset) {
    var pats = glob ? [glob] : ["*.fit", "*.fits", "*.FIT", "*.FITS"];
    var all = [];
    for (var i = 0; i < pats.length; i++) {
       var found = searchDirectory(dir + "/" + pats[i], false);
       for (var j = 0; j < found.length; j++) all.push(found[j]);
+   }
+   // Every stride-th frame from an offset, in sorted order: two disjoint
+   // half-stacks (stride 2, offsets 0 and 1) of one session are how noise
+   // that repeats in every frame is told from noise that does not -- the
+   // difference of the halves cancels the fixed pattern.
+   if (frame_stride && frame_stride > 1) {
+      all.sort();
+      var sub = [];
+      for (var k = (frame_offset || 0); k < all.length; k += frame_stride) sub.push(all[k]);
+      all = sub;
    }
    // Sort ONLY when a subset is requested.  "The first N of M" has no
    // meaning without a defined order, and searchDirectory's order is
@@ -281,7 +291,7 @@ function applyInstanceOverrides(P, tc) {
 }
 
 function runPrimary(tc, out_dir, manifest) {
-   var lights = collectLights(tc.light_dir, tc.light_glob, tc.max_frames);
+   var lights = collectLights(tc.light_dir, tc.light_glob, tc.max_frames, tc.frame_stride, tc.frame_offset);
    if (lights.length === 0)
       return { status: "fail", reason: "no FITS in " + tc.light_dir };
    Console.writeln("[" + tc.name + "] " + lights.length + " light frames");
@@ -385,7 +395,7 @@ function runPrimary(tc, out_dir, manifest) {
 }
 
 function runSweepVariant(tc, variant, out_dir, manifest) {
-   var lights = collectLights(tc.light_dir, tc.light_glob, tc.max_frames);
+   var lights = collectLights(tc.light_dir, tc.light_glob, tc.max_frames, tc.frame_stride, tc.frame_offset);
    if (lights.length === 0)
       return { status: "fail", reason: "no FITS" };
 
