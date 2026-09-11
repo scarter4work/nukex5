@@ -443,11 +443,16 @@ void GPUExecutor::execute_phase_b(
     FittingFn fitting_fn,
     Image& stacked_output,
     Image& noise_output,
-    ProgressObserver* progress) {
+    ProgressObserver* progress,
+    HalfStackFn half_fn,
+    Image* half_even,
+    Image* half_odd) {
 
     ProgressObserver& obs = progress ? *progress : null_progress_observer();
 
     int total_voxels = cube.total_pixels();
+    const bool want_halves = half_fn && half_even && half_odd
+                          && !half_even->empty() && !half_odd->empty();
     int n_channels = cube.at(0, 0).n_channels;
     int n_frames = n_frames_written;
     int N = std::min(n_frames, static_cast<int>(GPU_MAX_FRAMES));
@@ -545,6 +550,27 @@ void GPUExecutor::execute_phase_b(
 
             fitting_fn(voxel, vals.data(), wts.data(), N,
                         n_channels, frame_stats.data(), nf_ch.data());
+
+            // Half-stacks from the same samples: even-indexed and odd-indexed.
+            // Distinct pixels per thread, so the writes need no lock.
+            if (want_halves) {
+                std::vector<float> hv, hw;
+                for (int ch = 0; ch < n_channels; ch++) {
+                    const int k = nf_ch[ch];
+                    float est[2] = {0.0f, 0.0f};
+                    for (int parity = 0; parity < 2; parity++) {
+                        hv.clear(); hw.clear();
+                        for (int i = parity; i < k; i += 2) {
+                            hv.push_back(vals[ch * N + i]);
+                            hw.push_back(wts [ch * N + i]);
+                        }
+                        est[parity] = hv.empty() ? 0.0f
+                                    : half_fn(hv.data(), hw.data(), static_cast<int>(hv.size()));
+                    }
+                    if (ch < half_even->n_channels()) half_even->channel_data(ch)[voxel_idx] = est[0];
+                    if (ch < half_odd->n_channels())  half_odd->channel_data(ch)[voxel_idx]  = est[1];
+                }
+            }
 
             hb.tick(omp_get_thread_num(), obs);
         }

@@ -58,6 +58,12 @@ public:
                                           int, int, const FrameStats*,
                                           const int*)>;
 
+    /// Location of one channel's samples, for a half-stack: called on the
+    /// even-indexed and on the odd-indexed samples of every voxel so the two
+    /// halves can be differenced afterwards. Anything common to both -- a
+    /// fixed pattern -- cancels in the difference; what does not is noise.
+    using HalfStackFn = std::function<float(const float* values, const float* weights, int n)>;
+
     void execute_phase_b(
         Cube& cube,
         const std::vector<ChannelCacheRef>& slot_refs,
@@ -67,7 +73,10 @@ public:
         FittingFn fitting_fn,
         Image& stacked_output,
         Image& noise_output,
-        ProgressObserver* progress = nullptr);
+        ProgressObserver* progress = nullptr,
+        HalfStackFn half_fn = nullptr,
+        Image* half_even = nullptr,
+        Image* half_odd = nullptr);
 
     /// Run spatial context on the stacked output.
     void execute_spatial_context(

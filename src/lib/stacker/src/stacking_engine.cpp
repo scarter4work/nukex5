@@ -1301,10 +1301,23 @@ StackingEngine::ExecuteResult StackingEngine::execute(
     for (const auto& [sig, c] : caches)
         n_frames_written = std::max(n_frames_written, c.n_frames_written());
 
+    // Half-stacks for the noise decomposition, from the same samples and the
+    // same estimator as the stack itself.
+    Image half_even(out_width, out_height, n_ch), half_odd(out_width, out_height, n_ch);
+    GPUExecutor::HalfStackFn half_fn = [&fitter, &huber, use_huber](const float* v, const float* w, int n) -> float {
+        if (n <= 0) return 0.0f;
+        if (use_huber) {
+            std::vector<float> scratch(static_cast<std::size_t>(n));
+            return HuberEstimator::location(v, w, n, HuberEstimator::Config{}, scratch.data());
+        }
+        return fitter.select_best(v, w, n).distribution.true_signal_estimate;
+    };
+
     auto phase_b_start = std::chrono::steady_clock::now();
     gpu.execute_phase_b(cube, slot_cache_refs, n_frames_written,
                         frame_stats, config_.weight_config,
-                        fitting_fn, stacked, noise_map, &obs);
+                        fitting_fn, stacked, noise_map, &obs,
+                        half_fn, &half_even, &half_odd);
     auto phase_b_end = std::chrono::steady_clock::now();
     long phase_b_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                           phase_b_end - phase_b_start ).count();
@@ -1742,6 +1755,21 @@ StackingEngine::ExecuteResult StackingEngine::execute(
                           noise_luminance.describe(&cube.channel_config).c_str(),
                           nc.measured_median, nc.predicted_median, nc.ratio);
             obs.message(msg);
+
+            // What the ratio is made of. Half the samples against the other
+            // half: what cancels was in every frame and is not noise the
+            // estimator made -- it is what flats remove.
+            const OutputAssembler::NoiseDecomposition nd =
+                OutputAssembler::noise_decomposition(nc.measured_median, half_even, half_odd, noise_luminance);
+            if (nd.valid) {
+                std::snprintf(msg, sizeof(msg),
+                              "  of which stochastic %.3e (%.2fx the model) and fixed-pattern %.3e "
+                              "(%.0f%% of the variance)%s",
+                              nd.stochastic, nd.stochastic / nc.predicted_median, nd.fixed,
+                              100.0 * nd.fixed_share,
+                              nd.fixed_share > 0.3 ? " -- fixed pattern dominates: this is what flats remove." : ".");
+                obs.message(msg);
+            }
         }
     }
 

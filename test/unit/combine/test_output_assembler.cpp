@@ -3,6 +3,8 @@
 #include "nukex/core/cube.hpp"
 #include "nukex/core/channel_config.hpp"
 #include "nukex/core/filter.hpp"
+#include <cmath>
+#include <random>
 
 using namespace nukex;
 
@@ -138,4 +140,45 @@ TEST_CASE("OutputAssembler: noise check is not comparable when a map is empty or
     predicted.fill(0.0f);
     REQUIRE_FALSE(OutputAssembler::noise_check(measured, predicted).comparable);
     REQUIRE_FALSE(OutputAssembler::noise_check(Image{}, predicted).comparable);
+}
+
+// ── Stochastic vs fixed-pattern: the half-stack decomposition ────────────
+
+TEST_CASE("OutputAssembler: noise decomposition recovers stochastic and fixed-pattern "
+          "shares from two half-stacks", "[assembler]") {
+    // Full stack = fixed pattern + white noise s. Each half = the same fixed
+    // pattern + white noise s*sqrt(2). The kernel measured the full stack's
+    // noise: sqrt(s^2 + f^2). The decomposition must give s back, and f.
+    const int W = 200, H = 160;
+    const float s = 0.010f, f = 0.012f;
+    std::mt19937 rng(21);
+    std::normal_distribution<float> gn(0.0f, s * std::sqrt(2.0f));
+    std::normal_distribution<float> gf(0.0f, f);
+    Image even(W, H, 1), odd(W, H, 1);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            const float fixed = gf(rng);     // per-pixel, identical in both halves
+            even.at(x, y, 0) = 0.3f + fixed + gn(rng);
+            odd.at(x, y, 0)  = 0.3f + fixed + gn(rng);
+        }
+    const double measured = std::sqrt(static_cast<double>(s) * s + static_cast<double>(f) * f);
+    const auto nd = OutputAssembler::noise_decomposition(measured, even, odd);
+    REQUIRE(nd.valid);
+    REQUIRE(nd.stochastic == Catch::Approx(s).epsilon(0.12));
+    REQUIRE(nd.fixed == Catch::Approx(f).epsilon(0.15));
+    REQUIRE(nd.fixed_share == Catch::Approx(f * f / (s * s + f * f)).epsilon(0.2));
+}
+
+TEST_CASE("OutputAssembler: with no fixed pattern the fixed share is ~0", "[assembler]") {
+    const int W = 200, H = 160;
+    const float s = 0.010f;
+    std::mt19937 rng(22);
+    std::normal_distribution<float> gn(0.0f, s * std::sqrt(2.0f));
+    Image even(W, H, 1), odd(W, H, 1);
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) { even.at(x, y, 0) = 0.3f + gn(rng); odd.at(x, y, 0) = 0.3f + gn(rng); }
+    const auto nd = OutputAssembler::noise_decomposition(s, even, odd);
+    REQUIRE(nd.valid);
+    REQUIRE(nd.stochastic == Catch::Approx(s).epsilon(0.12));
+    REQUIRE(nd.fixed_share < 0.25);
 }
