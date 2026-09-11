@@ -155,7 +155,7 @@ IsoString NXEstimator::ElementId( size_type i ) const
    }
 }
 int NXEstimator::ElementValue( size_type i ) const { return int( i ); }
-size_type NXEstimator::DefaultValueIndex() const { return ModelRace; }
+size_type NXEstimator::DefaultValueIndex() const { return Huber; }
 
 // ── Sky gradient ─────────────────────────────────────────────────
 

@@ -66,8 +66,9 @@ public:
    // Remove the fixed-pattern sky tilt from the stack (plane only; the sky
    // level is untouched). See StackingEngine::Config::remove_sky_gradient.
    pcl_bool    removeSkyGradient = true;
-   // Phase B estimator: 0 = distribution model race, 1 = Huber M-estimator.
-   pcl_enum    estimator = 0;
+   // Phase B estimator: 0 = distribution model race, 1 = Huber M-estimator
+   // (the default since 5.0.6.0; measured less noisy on every corpus).
+   pcl_enum    estimator = 1;
    pcl_bool    enableGPU       = true;
    String      cacheDirectory  = String( nukex::default_cache_dir().c_str() );
    String      qeOverridePath;  // optional path to qe_overrides.json; empty = none

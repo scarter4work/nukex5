@@ -44,8 +44,14 @@ public:
         /// NukeX's original thesis: fit Student-t, GMM, Contamination and KDE
         /// per voxel, pick by AICc. Huber is the alternative the research
         /// branch measured against it (see HuberEstimator).
+        /// Measured on the four E2E corpora (v5.0.5.3 build, same frames):
+        /// Huber's stack is less noisy on every one -- ratio to the model
+        /// 1.24x->1.14x mono, 1.49x->1.16x dual-NB, 2.39x->2.16x LRGB-mono,
+        /// 2.69x->2.53x 24 MP OSC -- at 13-17x less Phase B time and half the
+        /// total, with saturation within 1% and alignment identical. Huber is
+        /// therefore the default; the race remains selectable.
         enum class Estimator { MODEL_RACE, HUBER };
-        Estimator             estimator = Estimator::MODEL_RACE;
+        Estimator             estimator = Estimator::HUBER;
 
         /// Keep the voxel record in a mapped, unlinked file under cache_dir
         /// when it would crowd memory. At 604 B/voxel a 24 MP 4-channel

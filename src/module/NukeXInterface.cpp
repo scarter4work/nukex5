@@ -292,7 +292,8 @@ NukeXInterface::GUIData::GUIData( NukeXInterface& w )
       "M-estimator: a robust weighted location (median seed, MAD scale, "
       "tuning 1.345).  Measured on four real sessions the race's result is "
       "1.05x to 1.47x noisier than Huber's at the pixel scale, and Huber "
-      "costs a small fraction of the time.";
+      "costs a small fraction of the time.  Huber is the default since "
+      "5.0.6.0.";
    Estimator_Label.SetText( "Estimator:" );
    Estimator_Label.SetTextAlignment( TextAlign::Right | TextAlign::VertCenter );
    Estimator_Label.SetToolTip( kEstimatorTip );
