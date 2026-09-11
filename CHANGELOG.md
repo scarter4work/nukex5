@@ -1,5 +1,31 @@
 # NukeX — Changelog
 
+## v5.0.6.0 — 2026-09-10
+
+### Changed
+
+- **The Huber M-estimator is now the default estimator.** NukeX's original
+  method fitted four statistical models to every pixel's samples and picked one
+  by AICc. Measured on the four regression corpora with the unbiased noise
+  check, that race produces a noisier stack than a plain Huber estimator on
+  every one of them, at thirteen to seventeen times the Phase B time:
+
+  | corpus | noise ratio to model, race → Huber | Phase B | total |
+  |---|---|---|---|
+  | NGC7635 mono, 65 frames | 1.24x → 1.14x | 59 s → 4 s | 130 s → 68 s |
+  | M16 dual-narrowband, 12 frames | 1.49x → 1.16x | 258 s → 16 s | 404 s → 198 s |
+  | M27 LRGB mono, 72 frames | 2.39x → 2.16x | 99 s → 5 s | 187 s → 91 s |
+  | M27 24 MP OSC, 33 frames | 2.69x → 2.53x | 476 s → 36 s | 815 s → 364 s |
+
+  Colour saturation is within 1% and alignment identical. The estimator is
+  seeded at the median, scaled by the MAD, tuned at 1.345 sigma, and folds the
+  per-frame weights into its own; a satellite trail through a pixel moves the
+  result by less than a tenth of a sigma where the mean moves by four. The
+  distribution race remains available under Options > Estimator, and still
+  produces the per-pixel model diagnostics it always did.
+
+**Every stacked image changes with this release.** That is the point of it.
+
 ## v5.0.5.3 — 2026-09-10
 
 ### Fixed
