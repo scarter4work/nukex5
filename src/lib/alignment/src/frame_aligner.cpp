@@ -9,25 +9,36 @@ namespace nukex {
 
 FrameAligner::FrameAligner(const Config& config) : config_(config) {}
 
-bool FrameAligner::try_chain(const StarCatalog& stars, int frame_index,
+std::vector<int> FrameAligner::chain_order(const std::vector<std::pair<int, double>>& anchors,
+                                           int frame_index, double frame_time) {
+    std::vector<int> order(anchors.size());
+    for (std::size_t i = 0; i < anchors.size(); ++i) order[i] = static_cast<int>(i);
+    // Nearest in TIME first: the least drift between the two frames, so the
+    // best chance their top-K star sets still overlap. Index distance only
+    // when a time is unknown -- processing order is directory order, which
+    // need not be chronological.
+    auto key = [&](int i) {
+        const auto& a = anchors[static_cast<std::size_t>(i)];
+        if (frame_time > 0.0 && a.second > 0.0) return std::fabs(a.second - frame_time);
+        return static_cast<double>(std::abs(a.first - frame_index)) * 1e9;   // rank below any timed anchor
+    };
+    std::stable_sort(order.begin(), order.end(), [&](int x, int y) { return key(x) < key(y); });
+    return order;
+}
+
+bool FrameAligner::try_chain(const StarCatalog& stars, int frame_index, double frame_time,
                              AlignmentResult& result) const {
     if (anchors_.empty()) return false;
 
-    // Nearest in time first: the least drift between the two frames, so the
-    // best chance their top-K star sets still overlap.
-    std::vector<const Anchor*> by_distance;
-    by_distance.reserve(anchors_.size());
-    for (const auto& a : anchors_) by_distance.push_back(&a);
-    std::sort(by_distance.begin(), by_distance.end(),
-              [frame_index](const Anchor* a, const Anchor* b) {
-                  return std::abs(a->index - frame_index)
-                       < std::abs(b->index - frame_index);
-              });
+    std::vector<std::pair<int, double>> it;
+    it.reserve(anchors_.size());
+    for (const auto& a : anchors_) it.emplace_back(a.index, a.time);
+    const std::vector<int> order = chain_order(it, frame_index, frame_time);
 
     const int limit = std::min<int>(config_.max_anchor_attempts,
-                                    static_cast<int>(by_distance.size()));
+                                    static_cast<int>(order.size()));
     for (int i = 0; i < limit; ++i) {
-        const Anchor* a = by_distance[i];
+        const Anchor* a = &anchors_[static_cast<std::size_t>(order[static_cast<std::size_t>(i)])];
         auto matches = StarMatcher::match(stars, a->catalog, config_.match_config);
         AlignmentResult step = HomographyComputer::compute(
             stars, a->catalog, matches, config_.homography_config);
@@ -47,7 +58,7 @@ bool FrameAligner::try_chain(const StarCatalog& stars, int frame_index,
     return false;
 }
 
-FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_index) {
+FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_index, double obs_time) {
     AlignedFrame result;
     result.frame_index = frame_index;
 
@@ -141,7 +152,7 @@ FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_ind
     // session. Fallback only -- a frame that matched directly never gets
     // here, which is what keeps fully-aligning corpora bit-identical.
     if (result.alignment.alignment_failed && config_.chain_through_anchors) {
-        if (try_chain(result.stars, frame_index, result.alignment)) {
+        if (try_chain(result.stars, frame_index, obs_time, result.alignment)) {
             ++chained_count_;
         }
     }
@@ -149,7 +160,7 @@ FrameAligner::AlignedFrame FrameAligner::align(const Image& frame, int frame_ind
     // Every frame that reached the reference -- directly or through the chain
     // -- can serve as a stepping stone for the next one.
     if (!result.alignment.alignment_failed) {
-        anchors_.push_back(Anchor{frame_index, result.stars, result.alignment.H});
+        anchors_.push_back(Anchor{frame_index, obs_time, result.stars, result.alignment.H});
     }
 
     if (!result.alignment.alignment_failed) {

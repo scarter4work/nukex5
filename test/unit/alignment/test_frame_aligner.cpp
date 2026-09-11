@@ -531,3 +531,32 @@ TEST_CASE("FrameAligner: chaining does not disturb a session that already "
     REQUIRE_FALSE(r1.alignment.alignment_failed);
     REQUIRE_FALSE(r1.alignment.chained);
 }
+
+// ── Chaining walks by TIME, not by processing order ──────────────────────
+
+TEST_CASE("FrameAligner::chain_order: anchors nearest in time come first, index "
+          "only when a time is unknown", "[aligner][chain]") {
+    // Processing order is directory order. The frame at index 47 is the
+    // first exposure of the session (t = 0); anchor 46 was taken 28 minutes
+    // later, anchor 3 two minutes later. Index distance would try 46 first.
+    // Times are epoch seconds; 0 is the "unknown" sentinel, so the session
+    // starts at T0.
+    const double T0 = 1756677586.0;
+    std::vector<std::pair<int, double>> anchors = {
+        {46, T0 + 1680.0}, {3, T0 + 120.0}, {10, T0 + 7200.0}, {20, T0 + 60.0},
+    };
+    auto order = FrameAligner::chain_order(anchors, 47, T0);
+    REQUIRE(order.size() == 4);
+    REQUIRE(anchors[order[0]].first == 20);   // 60 s away
+    REQUIRE(anchors[order[1]].first == 3);    // 120 s
+    REQUIRE(anchors[order[2]].first == 46);   // 1680 s
+    REQUIRE(anchors[order[3]].first == 10);   // 7200 s
+
+    // No times at all: fall back to index distance.
+    auto by_index = FrameAligner::chain_order({{46, 0.0}, {3, 0.0}, {10, 0.0}, {20, 0.0}}, 47, 0.0);
+    REQUIRE(by_index[0] == 0);   // index 46, one away
+
+    // A timed anchor outranks an untimed one however close in index.
+    auto mixed = FrameAligner::chain_order({{46, 0.0}, {3, T0 + 120.0}}, 47, T0);
+    REQUIRE(mixed[0] == 1);
+}

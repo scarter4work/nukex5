@@ -3,6 +3,7 @@
 #include "nukex/alignment/types.hpp"
 #include "nukex/alignment/star_detector.hpp"
 
+#include <utility>
 #include <vector>
 #include "nukex/alignment/star_matcher.hpp"
 #include "nukex/alignment/homography.hpp"
@@ -88,7 +89,19 @@ public:
         int frame_index;
     };
 
-    AlignedFrame align(const Image& frame, int frame_index);
+    /// `obs_time` is the frame's DATE-OBS in seconds (parse_fits_datetime);
+    /// 0 means unknown. It orders the chain's anchors: nearest in TIME first.
+    AlignedFrame align(const Image& frame, int frame_index, double obs_time = 0.0);
+
+    /// The order in which chaining tries anchors, as (index, time) pairs:
+    /// by |time difference| when both times are known, else by |index
+    /// difference|. Exposed because it was wrong once -- the comment said
+    /// "nearest in time" and the code sorted by index, which on an unsorted
+    /// directory is not time: the first exposure of a session was processed
+    /// 48th, its temporal neighbours were never tried, and it failed with 200
+    /// stars and no inliers.
+    static std::vector<int> chain_order(const std::vector<std::pair<int, double>>& anchors,
+                                        int frame_index, double frame_time);
 
     /// Install `frame` as the alignment reference before any align() call.
     ///
@@ -124,13 +137,14 @@ private:
     /// what lets the chain reach the ends of a session.
     struct Anchor {
         int              index = -1;
+        double           time  = 0.0;      ///< DATE-OBS seconds, 0 = unknown
         StarCatalog      catalog;
         HomographyMatrix H_ref_from_anchor;
     };
 
     /// Try to reach the reference through an anchor. Returns true and fills
     /// `result` on success.
-    bool try_chain(const StarCatalog& stars, int frame_index,
+    bool try_chain(const StarCatalog& stars, int frame_index, double frame_time,
                    AlignmentResult& result) const;
 
     Config config_;

@@ -35,6 +35,7 @@
 #include "nukex/fitting/robust_stats.hpp"
 #include "nukex/calibration/background_gradient.hpp"
 #include "nukex/stacker/cache_paths.hpp"
+#include "nukex/core/fits_time.hpp"
 #include "nukex/combine/output_assembler.hpp"
 #include "nukex/gpu/gpu_executor.hpp"
 #include "nukex/gpu/gpu_context.hpp"
@@ -789,7 +790,7 @@ StackingEngine::ExecuteResult StackingEngine::execute(
             sat_frac >= config_.aligner_config.star_config.saturation_reject_fraction;
 
         obs.advance(0, "  aligning");
-        auto aligned = aligner.align(image, f);
+        auto aligned = aligner.align(image, f, parse_fits_datetime(meta.date_obs));
         // Surface the alignment outcome including the actual inlier / RMS
         // numbers so a user reading the Process Console can tell which
         // frames genuinely aligned from which were weight-penalised.
