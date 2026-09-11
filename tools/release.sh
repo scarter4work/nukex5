@@ -93,7 +93,14 @@ package_release() {
     cp "${REPO}/share/qe_database.json" "${REPO_DIR}/share/"
 
     DATE="$(date +%Y%m%d)"
-    TAR="${REPO_DIR}/${DATE}-linux-x64-NukeX.tar.gz"
+    # The version goes in the name. Four releases on 2026-09-10 shared
+    # "20260910-linux-x64-NukeX.tar.gz", and raw.githubusercontent.com kept
+    # serving the previous day's bytes for that path for many minutes after
+    # the push -- while the signed manifest already named the new sha1. An
+    # updater that fetched in that window would have seen a checksum
+    # mismatch. A name that changes with every release cannot be stale.
+    VER="$(sed -nE 's/^#define NUKEX_MODULE_VERSION_(MAJOR|MINOR|REVISION|BUILD) +([0-9]+).*/\2/p' "${REPO}/src/module/NukeXVersion.h" | paste -sd. -)"
+    TAR="${REPO_DIR}/${DATE}-linux-x64-NukeX-${VER}.tar.gz"
     echo "=== Creating tarball ${TAR} ==="
     tar -C "${REPO_DIR}" -czf "${TAR}" bin/ share/
     NEW_SHA1="$(sha1sum "${TAR}" | awk '{print $1}')"
