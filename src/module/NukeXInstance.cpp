@@ -851,6 +851,7 @@ bool NukeXInstance::ExecuteGlobal()
    // the compose step measured -- for the emission-line route.
    nukex::ColorComposer composer;
    bool have_emission_slots = false;
+   nukex::Image gate_plane;   // the smoothed emission total the chroma gate judges
 
    // ── ColorComposer-driven 3-channel sRGB output (Task 12) ─────
    //
@@ -909,17 +910,21 @@ bool NukeXInstance::ExecuteGlobal()
             "Line sky levels subtracted before the ratio: Ha %.6f, OIII %.6f, SII %.6f.",
             sky_ha, sky_oiii, sky_sii ) );
 
-         // The gate is then on the sky-SUBTRACTED total, the same quantity
-         // the composer weighs.
+         // The gate is judged on the sky-subtracted total SMOOTHED over a 7x7
+         // neighbourhood. Extended faint emission is real when its
+         // neighbourhood is; a lone noise excursion is not. Judged per pixel
+         // the gate either painted sky noise (a ramp from the sky level) or
+         // cut the nebula's outskirts to grey at a hard edge (a per-pixel
+         // detection threshold); over a neighbourhood the noise averages
+         // down sevenfold and the outskirts keep their colour.
+         gate_plane = nukex::box_smooth(
+             nukex::emission_total_image( w, h, result.derived.slots, composer ), 3 );
          std::vector<double> samples;
          samples.reserve( static_cast<std::size_t>( N / stride ) + 1 );
-         for ( int p = 0; p < N; p += stride )
+         if ( !gate_plane.empty() )
          {
-            double tw = 0.0;
-            if ( Ha_p   ) tw += std::max( 0.0, static_cast<double>( Ha_p[p]   ) - sky_ha );
-            if ( OIII_p ) tw += std::max( 0.0, static_cast<double>( OIII_p[p] ) - sky_oiii );
-            if ( SII_p  ) tw += std::max( 0.0, static_cast<double>( SII_p[p]  ) - sky_sii );
-            samples.push_back( tw );
+            const float* gp = gate_plane.channel_data( 0 );
+            for ( int p = 0; p < N; p += stride ) samples.push_back( gp[p] );
          }
          if ( !samples.empty() )
          {
@@ -944,7 +949,7 @@ bool NukeXInstance::ExecuteGlobal()
                // therefore starts at +3 sigma and is full at +6.
                composer.set_chroma_gate( median + 3.0*sigma, median + 6.0*sigma );
                Console().WriteLn( String().Format(
-                  "Chroma gate: no colour below %.6f (sky + 3 sigma), full colour at %.6f (sky + 6 sigma).",
+                  "Chroma gate on the 7x7-smoothed emission total: no colour below %.6f (sky + 3 sigma), full colour at %.6f (sky + 6 sigma).",
                   median + 3.0*sigma, median + 6.0*sigma ) );
             }
             else
@@ -967,7 +972,7 @@ bool NukeXInstance::ExecuteGlobal()
       // Compose ONCE. The same pixels are shown here and stretched below;
       // composing twice would double a Lab/LCH solve over every pixel.
       composed_image = nukex::compose_slots_to_image(
-          w, h, result.derived.slots, composer );
+          w, h, result.derived.slots, composer, gate_plane.empty() ? nullptr : &gate_plane );
 
       if ( cvi.IsFloatSample() && cvi.BitsPerSample() == 32 && !composed_image.empty() )
       {
@@ -1164,7 +1169,7 @@ bool NukeXInstance::ExecuteGlobal()
          // palette as the composed window; only L* differs.
          stretched = nukex::compose_slots_with_luminance(
              result.derived.width, result.derived.height, result.derived.slots,
-             composer, stretched );
+             composer, stretched, gate_plane.empty() ? nullptr : &gate_plane );
          progress.message( "Emission-line colour composed at the stretched luminance." );
       }
 

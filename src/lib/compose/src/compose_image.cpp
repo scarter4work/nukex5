@@ -1,4 +1,5 @@
 #include "nukex/compose/compose_image.hpp"
+#include <algorithm>
 
 namespace nukex {
 
@@ -12,7 +13,8 @@ bool slots_have_colour(
 Image compose_slots_to_image(
     int width, int height,
     const std::unordered_map<std::string, std::vector<float>>& slots,
-    ColorComposer& composer) {
+    ColorComposer& composer,
+    const Image* gate_plane) {
 
     const std::size_t n = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
     if (width <= 0 || height <= 0 || slots.empty() || n == 0) return Image{};
@@ -34,6 +36,10 @@ Image compose_slots_to_image(
 
     if (!L && !R && !G && !B && !Ha && !OIII && !SII) return Image{};
 
+    const bool gate_ok = gate_plane && !gate_plane->empty() && gate_plane->n_channels() == 1
+                      && gate_plane->width() == width && gate_plane->height() == height;
+    const float* gate = gate_ok ? gate_plane->channel_data(0) : nullptr;
+
     Image out(width, height, 3);
     float* dst_r = out.channel_data(0);
     float* dst_g = out.channel_data(1);
@@ -48,7 +54,9 @@ Image compose_slots_to_image(
         if (Ha)   ds.Ha   = static_cast<double>(Ha[p]);
         if (OIII) ds.OIII = static_cast<double>(OIII[p]);
         if (SII)  ds.SII  = static_cast<double>(SII[p]);
-        const sRGBPixel c = composer.compose_pixel(ds);
+        const sRGBPixel c = gate_ok
+            ? composer.map_to_srgb(composer.compose_lab(ds, static_cast<double>(gate[p])))
+            : composer.compose_pixel(ds);
         dst_r[p] = static_cast<float>(c.r);
         dst_g[p] = static_cast<float>(c.g);
         dst_b[p] = static_cast<float>(c.b);
@@ -109,13 +117,17 @@ Image compose_slots_with_luminance(
     int width, int height,
     const std::unordered_map<std::string, std::vector<float>>& slots,
     ColorComposer& composer,
-    const Image& luminance) {
+    const Image& luminance,
+    const Image* gate_plane) {
     const std::size_t n = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
     if (width <= 0 || height <= 0 || slots.empty() || n == 0) return Image{};
     if (luminance.empty() || luminance.n_channels() != 1 ||
         luminance.width() != width || luminance.height() != height) return Image{};
     const SlotPlanes sp = resolve(slots, n);
     if (!sp.any()) return Image{};
+    const bool gate_ok = gate_plane && !gate_plane->empty() && gate_plane->n_channels() == 1
+                      && gate_plane->width() == width && gate_plane->height() == height;
+    const float* gate = gate_ok ? gate_plane->channel_data(0) : nullptr;
 
     Image out(width, height, 3);
     float* dst_r = out.channel_data(0);
@@ -123,7 +135,8 @@ Image compose_slots_with_luminance(
     float* dst_b = out.channel_data(2);
     const float* lum = luminance.channel_data(0);
     for (std::size_t p = 0; p < n; ++p) {
-        LabColor lab = composer.compose_lab(sp.at(p));
+        LabColor lab = gate_ok ? composer.compose_lab(sp.at(p), static_cast<double>(gate[p]))
+                               : composer.compose_lab(sp.at(p));
         lab.L = ColorComposer::lab_L_from_luminance(static_cast<double>(lum[p]));
         const sRGBPixel c = composer.map_to_srgb(lab);
         dst_r[p] = static_cast<float>(c.r);
@@ -131,6 +144,61 @@ Image compose_slots_with_luminance(
         dst_b[p] = static_cast<float>(c.b);
     }
     return out;
+}
+
+Image emission_total_image(
+    int width, int height,
+    const std::unordered_map<std::string, std::vector<float>>& slots,
+    const ColorComposer& composer) {
+    const std::size_t n = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    if (width <= 0 || height <= 0 || slots.empty() || n == 0) return Image{};
+    const SlotPlanes sp = resolve(slots, n);
+    if (!sp.Ha && !sp.OIII && !sp.SII) return Image{};
+    const double sha = composer.line_background_ha(), so3 = composer.line_background_oiii(),
+                 ss2 = composer.line_background_sii();
+    Image out(width, height, 1);
+    float* dst = out.channel_data(0);
+    for (std::size_t p = 0; p < n; ++p) {
+        double t = 0.0;
+        if (sp.Ha)   t += std::max(0.0, static_cast<double>(sp.Ha[p])   - sha);
+        if (sp.OIII) t += std::max(0.0, static_cast<double>(sp.OIII[p]) - so3);
+        if (sp.SII)  t += std::max(0.0, static_cast<double>(sp.SII[p])  - ss2);
+        dst[p] = static_cast<float>(t);
+    }
+    return out;
+}
+
+Image box_smooth(const Image& plane, int radius) {
+    if (plane.empty() || plane.n_channels() != 1 || radius <= 0) return plane;
+    const int w = plane.width(), h = plane.height();
+    const float* src = plane.channel_data(0);
+    std::vector<float> tmp(static_cast<std::size_t>(w) * h);
+    // rows: running sum with clamped edges
+    for (int y = 0; y < h; y++) {
+        const float* row = src + static_cast<std::size_t>(y) * w;
+        float* out = tmp.data() + static_cast<std::size_t>(y) * w;
+        for (int x = 0; x < w; x++) {
+            double acc = 0.0;
+            for (int k = -radius; k <= radius; k++) {
+                const int xx = std::min(w - 1, std::max(0, x + k));
+                acc += row[xx];
+            }
+            out[x] = static_cast<float>(acc / (2 * radius + 1));
+        }
+    }
+    Image res(w, h, 1);
+    float* dst = res.channel_data(0);
+    for (int x = 0; x < w; x++) {
+        for (int y = 0; y < h; y++) {
+            double acc = 0.0;
+            for (int k = -radius; k <= radius; k++) {
+                const int yy = std::min(h - 1, std::max(0, y + k));
+                acc += tmp[static_cast<std::size_t>(yy) * w + x];
+            }
+            dst[static_cast<std::size_t>(y) * w + x] = static_cast<float>(acc / (2 * radius + 1));
+        }
+    }
+    return res;
 }
 
 } // namespace nukex

@@ -39,10 +39,26 @@ namespace nukex {
 bool slots_have_colour(
     const std::unordered_map<std::string, std::vector<float>>& slots);
 
+/// One-channel image of the sky-subtracted emission total per pixel,
+/// sum over lines of max(0, line - composer.line_background_*()): the
+/// quantity the chroma gate judges.
+Image emission_total_image(
+    int width, int height,
+    const std::unordered_map<std::string, std::vector<float>>& slots,
+    const ColorComposer& composer);
+
+/// Separable box mean of a one-channel image over (2r+1)^2, edges clamped.
+Image box_smooth(const Image& plane, int radius);
+
+/// `gate_plane`, when given (one channel, same size), is the value the
+/// chroma gate judges at each pixel instead of the pixel's own total --
+/// the smoothed emission total, so colour follows extended structure and
+/// not single-pixel noise.
 Image compose_slots_to_image(
     int width, int height,
     const std::unordered_map<std::string, std::vector<float>>& slots,
-    ColorComposer& composer);
+    ColorComposer& composer,
+    const Image* gate_plane = nullptr);
 
 /// One-channel image of the composer's own luminance per pixel
 /// (ColorComposer::luminance_of): native L, else rec709 of RGB, else the
@@ -68,6 +84,7 @@ Image compose_slots_with_luminance(
     int width, int height,
     const std::unordered_map<std::string, std::vector<float>>& slots,
     ColorComposer& composer,
-    const Image& luminance);
+    const Image& luminance,
+    const Image* gate_plane = nullptr);
 
 } // namespace nukex

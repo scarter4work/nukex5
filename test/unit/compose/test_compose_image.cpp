@@ -143,3 +143,47 @@ TEST_CASE("compose_slots_with_luminance refuses a luminance of the wrong shape",
     Image colour(2, 1, 3);
     REQUIRE(compose_slots_with_luminance(2, 1, slots, composer, colour).empty());
 }
+
+// ── The gate judged on a neighbourhood ────────────────────────────────────
+
+TEST_CASE("a gate plane overrides the pixel's own total in the chroma gate", "[compose]") {
+    const int W = 2, H = 1;
+    Slots slots;
+    slots["Ha"]   = {0.10f, 0.0005f};   // bright pixel, faint pixel
+    slots["OIII"] = {0.02f, 0.0001f};
+    ColorComposer c;
+    c.set_chroma_gate(0.003, 0.006);
+    Image lum(W, H, 1); lum.at(0, 0, 0) = 0.5f; lum.at(1, 0, 0) = 0.5f;
+    Image gate(W, H, 1);
+    gate.at(0, 0, 0) = 0.0f;      // a bright pixel whose neighbourhood says "noise"
+    gate.at(1, 0, 0) = 0.02f;     // a faint pixel whose neighbourhood says "emission"
+    const Image out = compose_slots_with_luminance(W, H, slots, c, lum, &gate);
+    const sRGBPixel p0{out.at(0, 0, 0), out.at(0, 0, 1), out.at(0, 0, 2)};
+    const sRGBPixel p1{out.at(1, 0, 0), out.at(1, 0, 1), out.at(1, 0, 2)};
+    REQUIRE(hsv_saturation(p0) < 0.02);   // no colour: the gate said no
+    REQUIRE(hsv_saturation(p1) > 0.3);    // full palette: the gate said yes
+}
+
+TEST_CASE("emission_total_image subtracts the line backgrounds and clamps at zero", "[compose]") {
+    Slots slots;
+    slots["Ha"]   = {0.030f, 0.010f};
+    slots["OIII"] = {0.025f, 0.030f};
+    ColorComposer c;
+    c.set_line_backgrounds(0.020, 0.020, 0.0);
+    const Image t = emission_total_image(2, 1, slots, c);
+    REQUIRE(t.n_channels() == 1);
+    REQUIRE(t.at(0, 0, 0) == Catch::Approx(0.015f));   // 0.010 + 0.005
+    REQUIRE(t.at(1, 0, 0) == Catch::Approx(0.010f));   // max(0,-0.010) + 0.010
+}
+
+TEST_CASE("box_smooth keeps a constant and spreads an impulse over the window", "[compose]") {
+    Image flat(20, 20, 1); flat.fill(0.3f);
+    const Image f = box_smooth(flat, 3);
+    REQUIRE(f.at(10, 10, 0) == Catch::Approx(0.3f));
+    REQUIRE(f.at(0, 0, 0) == Catch::Approx(0.3f));      // clamped edges keep the level
+    Image imp(20, 20, 1); imp.fill(0.0f); imp.at(10, 10, 0) = 49.0f;
+    const Image g = box_smooth(imp, 3);
+    REQUIRE(g.at(10, 10, 0) == Catch::Approx(1.0f));
+    REQUIRE(g.at(13, 13, 0) == Catch::Approx(1.0f));
+    REQUIRE(g.at(14, 10, 0) == Catch::Approx(0.0f));
+}

@@ -61,7 +61,13 @@ public:
     /// therefore takes compose_lab, replaces L* with the L* of the STRETCHED
     /// luminance, and maps once, there. Hue and chroma stay exactly the
     /// line-ratio values Lupton et al. 2004 require; only lightness moves.
-    LabColor  compose_lab(const DerivedSlots& s);
+    /// `gate_total`, when >= 0, replaces the pixel's own sky-subtracted
+    /// emission total in the chroma gate. The caller passes a spatially
+    /// SMOOTHED total: extended faint emission is real when its neighbourhood
+    /// is, and a lone noise excursion is not. Judged per pixel, the gate cut
+    /// the faint outskirts of M16 to grey at a hard edge; judged over a 7x7
+    /// neighbourhood the outskirts keep their colour and the sky stays grey.
+    LabColor  compose_lab(const DerivedSlots& s, double gate_total = -1.0);
     sRGBPixel map_to_srgb(const LabColor& lab);
 
     /// The composer's luminance for a slot tuple, in the slots' own units:

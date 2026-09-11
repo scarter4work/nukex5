@@ -128,7 +128,7 @@ double ColorComposer::lab_L_from_luminance(double v) {
     return 116.0 * f_lab(linear_y) - 16.0;
 }
 
-LabColor ColorComposer::compose_lab(const DerivedSlots& s) {
+LabColor ColorComposer::compose_lab(const DerivedSlots& s, double gate_total) {
     // 1) Luminance.
     const double L_broad = luminance_of(s);
 
@@ -182,8 +182,9 @@ LabColor ColorComposer::compose_lab(const DerivedSlots& s) {
         // accident, and so blank sky is not painted a bold colour.
         if (gate_full_scale_ > gate_background_) {
             const double span = gate_full_scale_ - gate_background_;
+            const double judged = (gate_total >= 0.0) ? gate_total : total_w;
             chroma_scale = std::min(1.0,
-                std::max(0.0, (total_w - gate_background_) / span));
+                std::max(0.0, (judged - gate_background_) / span));
         } else {
             chroma_scale = 1.0;
         }
