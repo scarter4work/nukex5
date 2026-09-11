@@ -934,10 +934,18 @@ bool NukeXInstance::ExecuteGlobal()
             const double sigma = 1.4826 * mad;
             if ( sigma > 0.0 )
             {
-               composer.set_chroma_gate( median, median + 3.0*sigma );
+               // A DETECTION threshold, not a ramp from the sky median.
+               // Ramping from the median hands a pixel at +1 sigma a third of
+               // the palette, and 16% of sky pixels sit above +1 sigma: on
+               // M16 a third of the sky came out with saturation above 0.25
+               // -- red speckle. Measured on the same planes: the sky's
+               // darkest half never exceeds +3 sigma, the nebula body sits at
+               // +25 sigma, and the faint outskirts straddle 3 to 6. Chroma
+               // therefore starts at +3 sigma and is full at +6.
+               composer.set_chroma_gate( median + 3.0*sigma, median + 6.0*sigma );
                Console().WriteLn( String().Format(
-                  "Chroma gate: sky %.6f, full colour at %.6f (3 sigma).",
-                  median, median + 3.0*sigma ) );
+                  "Chroma gate: no colour below %.6f (sky + 3 sigma), full colour at %.6f (sky + 6 sigma).",
+                  median + 3.0*sigma, median + 6.0*sigma ) );
             }
             else
             {
