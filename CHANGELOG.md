@@ -1,5 +1,23 @@
 # NukeX — Changelog
 
+## v5.0.6.2 — 2026-09-10
+
+### Fixed
+
+- **Chained alignment now walks by time.** When a frame cannot match the
+  reference directly, NukeX aligns it through an already-aligned neighbour.
+  It chose those neighbours by the order the files were read, which is the
+  directory listing, not the clock: on the M27 2025 session the very first
+  exposure was read 48th, was offered frames from half an hour later, and
+  failed with 200 stars and no matches while frames on either side of it were
+  rescued. Anchors are now tried nearest in observation time first, from the
+  DATE-OBS header; the file order is used only when a frame carries no time.
+  Of the seven frames that session still lost, six detect 4 to 67 stars where
+  the rest find 200 — cloud or wind — and rejecting those is right.
+
+**Stacked images change only where a frame that used to fail alignment now
+joins the stack.**
+
 ## v5.0.6.1 — 2026-09-10
 
 ### Fixed
