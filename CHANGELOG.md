@@ -1,5 +1,28 @@
 # NukeX — Changelog
 
+## v5.0.6.1 — 2026-09-10
+
+### Fixed
+
+- **Sky noise is no longer painted with the emission palette.** The chroma
+  gate ramped colour in from the sky level, so a sky pixel one sigma above it
+  received a third of the palette, and a sixth of sky pixels sit there by
+  definition: on M16 a third of the sky came out with saturation above 0.25, a
+  red speckle. Measured on the same line planes, the sky's darkest half never
+  exceeds three sigma, the nebula body sits at twenty-five, and the faint
+  outskirts straddle three to six. Colour now starts at three sigma above sky
+  and is full at six, and the emission is judged over a 7x7 neighbourhood
+  rather than pixel by pixel: extended faint nebulosity is real when its
+  surroundings are, so it keeps its colour, while a lone noisy pixel cannot
+  earn any. The sky level and the noise that set the ramp are measured blind
+  to structure — the sky as a clipped median that walks onto its own peak, the
+  noise from differences between pixels sixteen apart — because on a field
+  the nebula fills, the plain median and spread of the frame are nebula. The
+  sky stays neutral, the nebula loses nothing, and the outskirts fade into
+  grey instead of stopping at a hard edge.
+
+**Only the stretched and composed images of emission-line stacks change.**
+
 ## v5.0.6.0 — 2026-09-10
 
 ### Changed
